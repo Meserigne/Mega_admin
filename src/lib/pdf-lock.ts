@@ -22,10 +22,11 @@ async function getQpdf(): Promise<QpdfModule> {
   if (!qpdfPromise) {
     qpdfPromise = (async () => {
       const createModule = (await import("@neslinesli93/qpdf-wasm")).default;
-      return createModule({
+      const mod = await createModule({
         locateFile: () => resolveWasmPath(),
         noInitialRun: true,
-      }) as Promise<QpdfModule>;
+      });
+      return mod as unknown as QpdfModule;
     })();
   }
   return qpdfPromise;
