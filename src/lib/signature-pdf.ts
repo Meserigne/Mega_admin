@@ -120,7 +120,6 @@ function buildAuditReport(envelope: {
     }
   }
 
-  const signers = envelope.destinataires.filter((d) => d.role === "SIGNATAIRE");
   const allSignersDone =
     signers.length > 0 && signers.every((d) => d.statut === "SIGNE");
   if (
