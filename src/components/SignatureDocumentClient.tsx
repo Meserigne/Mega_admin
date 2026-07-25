@@ -401,11 +401,23 @@ export function SignatureDocumentClient({
               <a href={signedHref} target="_blank" rel="noreferrer">
                 <Button variant="secondary" className="gap-1.5">
                   <Download className="h-4 w-4" />
-                  Ouvrir le document signé
+                  {detail.statut === "COMPLETE"
+                    ? "PDF certifié + audit"
+                    : "Ouvrir le document signé"}
                 </Button>
               </a>
             </div>
           </div>
+
+          {detail.statut === "COMPLETE" && (
+            <div className="mt-4">
+              <Alert type="info">
+                Document certifié par MEGA Signature : verrouillé contre les
+                modifications, avec une page de rapport d&apos;audit (historique)
+                en dernière page du PDF.
+              </Alert>
+            </div>
+          )}
 
           <SignedDocumentPreview detail={detail} />
 

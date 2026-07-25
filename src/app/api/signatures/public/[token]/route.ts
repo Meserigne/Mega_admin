@@ -4,8 +4,7 @@ import {
   isDbArchivePath,
   readArchiveBytes,
 } from "@/lib/archive-storage";
-import { buildAnnotationsFromEnvelope } from "@/lib/signature-pdf";
-import { buildSignedPdf } from "@/lib/signature-flatten";
+import { buildSignedPdfForEnvelope } from "@/lib/signature-pdf";
 import { prisma } from "@/lib/prisma";
 
 export const dynamic = "force-dynamic";
@@ -41,8 +40,29 @@ export async function GET(
   }
 
   const envelope = dest.envelope;
+  if (envelope.deletedAt) {
+    return NextResponse.json({ error: "Document introuvable." }, { status: 404 });
+  }
 
   try {
+    if (signed) {
+      try {
+        const flattened = await buildSignedPdfForEnvelope(envelope.id);
+        if (flattened) {
+          return new NextResponse(Buffer.from(flattened.bytes), {
+            headers: {
+              "Content-Type": "application/pdf",
+              "Content-Length": String(flattened.bytes.byteLength),
+              "Content-Disposition": `inline; filename="${encodeURIComponent(flattened.fileName)}"`,
+              "Cache-Control": "private, no-store",
+            },
+          });
+        }
+      } catch (e) {
+        console.error("public signed pdf error:", e);
+      }
+    }
+
     if (
       (!envelope.fichierContenu || envelope.fichierContenu.length === 0) &&
       isDbArchivePath(envelope.fichierChemin)
@@ -58,30 +78,6 @@ export async function GET(
       envelope.fichierContenu
     );
     const mime = envelope.fichierMime ?? "application/octet-stream";
-
-    if (signed) {
-      try {
-        const flattened = await buildSignedPdf({
-          fileBytes: new Uint8Array(body),
-          fileMime: mime,
-          fileName: envelope.fichierNom,
-          annotations: buildAnnotationsFromEnvelope(
-            envelope.champs,
-            envelope.destinataires
-          ),
-        });
-        return new NextResponse(Buffer.from(flattened.bytes), {
-          headers: {
-            "Content-Type": "application/pdf",
-            "Content-Length": String(flattened.bytes.byteLength),
-            "Content-Disposition": `inline; filename="${encodeURIComponent(flattened.fileName)}"`,
-            "Cache-Control": "private, no-store",
-          },
-        });
-      } catch (e) {
-        console.error("public signed pdf error:", e);
-      }
-    }
 
     return new NextResponse(Buffer.from(body), {
       headers: {

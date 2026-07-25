@@ -1,4 +1,9 @@
+import { randomBytes } from "crypto";
 import { PDFDocument, rgb, StandardFonts } from "pdf-lib";
+import {
+  appendFinalAuditReportPage,
+  type SignatureAuditReport,
+} from "@/lib/signature-audit-pdf";
 
 export type StampAnnotation = {
   type: string;
@@ -9,6 +14,8 @@ export type StampAnnotation = {
   hauteur: number;
   page?: number;
 };
+
+export type { SignatureAuditReport };
 
 function dataUrlToBytes(dataUrl: string): { bytes: Uint8Array; mime: string } | null {
   const m = /^data:([^;]+);base64,(.+)$/i.exec(dataUrl.trim());
@@ -22,11 +29,39 @@ function dataUrlToBytes(dataUrl: string): { bytes: Uint8Array; mime: string } | 
  * Produit un PDF avec les annotations (signatures, texte…) incrustées.
  * Fonctionne pour un PDF source ou une image (PNG/JPEG/WebP→PNG via bytes).
  */
+async function lockPdfAgainstModification(
+  bytes: Uint8Array
+): Promise<Uint8Array> {
+  try {
+    const { encryptPDF } = await import("@pdfsmaller/pdf-encrypt");
+    const ownerPassword = randomBytes(24).toString("base64url");
+    // Mot de passe utilisateur vide = ouverture libre, modifications bloquées
+    const locked = await encryptPDF(bytes, "", {
+      ownerPassword,
+      allowPrinting: true,
+      allowHighQualityPrint: true,
+      allowCopying: true,
+      allowModifying: false,
+      allowAnnotating: false,
+      allowFillingForms: false,
+      allowAssembly: false,
+      allowExtraction: true,
+    });
+    return locked instanceof Uint8Array ? locked : new Uint8Array(locked);
+  } catch (e) {
+    console.error("[signature-flatten] lock PDF failed", e);
+    return bytes;
+  }
+}
+
 export async function buildSignedPdf(input: {
   fileBytes: Uint8Array;
   fileMime: string;
   fileName: string;
   annotations: StampAnnotation[];
+  /** Page d'audit + verrouillage (document complet). */
+  audit?: SignatureAuditReport | null;
+  lock?: boolean;
 }): Promise<{ bytes: Uint8Array; fileName: string }> {
   const mime = (input.fileMime || "").toLowerCase();
   const isPdf =
@@ -131,7 +166,14 @@ export async function buildSignedPdf(input: {
     }
   }
 
-  const bytes = await pdf.save();
+  if (input.audit) {
+    await appendFinalAuditReportPage(pdf, input.audit);
+  }
+
+  let bytes = await pdf.save({ useObjectStreams: false });
+  if (input.lock || input.audit) {
+    bytes = await lockPdfAgainstModification(bytes);
+  }
   return { bytes, fileName: signedFileName(input.fileName) };
 }
 
