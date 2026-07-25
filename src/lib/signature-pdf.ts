@@ -24,6 +24,16 @@ type DestLike = {
   signatureImage: string | null;
 };
 
+function isStampChampType(type: string) {
+  const t = type.toUpperCase();
+  return (
+    t === "SIGNATURE" ||
+    t === "BLOC_SIGNATURE" ||
+    t === "PARAPHE" ||
+    t === "INITIALES"
+  );
+}
+
 /** Valeur affichable : champ rempli, sinon image du destinataire pour signature/paraphe. */
 export function resolveChampValeur(
   champ: ChampLike,
@@ -33,9 +43,9 @@ export function resolveChampValeur(
   if (v) return v;
   if (!champ.destinataireId) return null;
   const dest = destById.get(champ.destinataireId);
-  if (!dest?.signatureImage) return null;
+  if (!dest) return null;
   const t = champ.type.toUpperCase();
-  if (t === "SIGNATURE" || t === "PARAPHE" || t === "INITIALES") {
+  if (isStampChampType(t) && dest.signatureImage) {
     return dest.signatureImage;
   }
   return null;
@@ -110,9 +120,15 @@ function buildAuditReport(envelope: {
     }
   }
 
-  if (envelope.statut === "COMPLETE" && envelope.completeAt) {
+  const signers = envelope.destinataires.filter((d) => d.role === "SIGNATAIRE");
+  const allSignersDone =
+    signers.length > 0 && signers.every((d) => d.statut === "SIGNE");
+  if (
+    (envelope.statut === "COMPLETE" || allSignersDone) &&
+    (envelope.completeAt || allSignersDone)
+  ) {
     events.push({
-      at: envelope.completeAt,
+      at: envelope.completeAt || new Date(),
       title: "Accord terminé",
       detail: "Document certifié et verrouillé par MEGA Signature.",
     });
@@ -159,16 +175,59 @@ export async function buildSignedPdfForEnvelope(
     envelope.fichierContenu
   );
 
-  const isComplete = envelope.statut === "COMPLETE";
-  const audit = isComplete ? buildAuditReport(envelope) : null;
+  const signers = envelope.destinataires.filter((d) => d.role === "SIGNATAIRE");
+  const allSignersDone =
+    signers.length > 0 && signers.every((d) => d.statut === "SIGNE");
+  const anySigned = envelope.destinataires.some((d) => d.statut === "SIGNE");
+
+  // Répare les enveloppes restées « en cours » alors que tous les signataires ont signé
+  let envelopeForAudit = envelope;
+  if (allSignersDone && envelope.statut !== "COMPLETE") {
+    const completeAt = new Date();
+    const initiateur = envelope.destinataires.find((d) => d.role === "INITIATEUR");
+    if (initiateur && initiateur.statut !== "SIGNE") {
+      await prisma.signatureDestinataire.update({
+        where: { id: initiateur.id },
+        data: { statut: "SIGNE", signeAt: completeAt, motifRefus: null },
+      });
+    }
+    envelopeForAudit = await prisma.signatureEnvelope.update({
+      where: { id: envelope.id },
+      data: { statut: "COMPLETE", completeAt },
+      include: {
+        champs: { orderBy: { createdAt: "asc" } },
+        destinataires: { orderBy: { ordre: "asc" } },
+      },
+    });
+  }
+
+  const isComplete =
+    envelopeForAudit.statut === "COMPLETE" || allSignersDone;
+  const audit =
+    anySigned || isComplete ? buildAuditReport(envelopeForAudit) : null;
+
+  // Assurer que chaque champ tampon a une image (fallback signatureImage)
+  for (const c of envelopeForAudit.champs) {
+    if ((c.valeur || "").trim()) continue;
+    if (!isStampChampType(c.type) || !c.destinataireId) continue;
+    const dest = envelopeForAudit.destinataires.find(
+      (d) => d.id === c.destinataireId
+    );
+    if (!dest?.signatureImage) continue;
+    await prisma.signatureChamp.update({
+      where: { id: c.id },
+      data: { valeur: dest.signatureImage },
+    });
+    c.valeur = dest.signatureImage;
+  }
 
   return buildSignedPdf({
     fileBytes: new Uint8Array(body),
-    fileMime: envelope.fichierMime ?? "application/octet-stream",
-    fileName: envelope.fichierNom,
+    fileMime: envelopeForAudit.fichierMime ?? "application/octet-stream",
+    fileName: envelopeForAudit.fichierNom,
     annotations: buildAnnotationsFromEnvelope(
-      envelope.champs,
-      envelope.destinataires
+      envelopeForAudit.champs,
+      envelopeForAudit.destinataires
     ),
     audit,
     lock: isComplete,

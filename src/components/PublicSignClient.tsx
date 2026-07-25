@@ -36,7 +36,7 @@ const ACCENT = "#2563eb";
 
 function fieldLabel(type: string) {
   const t = type.toUpperCase();
-  if (t === "SIGNATURE") return "Click to Sign";
+  if (t === "SIGNATURE" || t === "BLOC_SIGNATURE") return "Click to Sign";
   if (t === "PARAPHE" || t === "INITIALES") return "Initials";
   if (t === "DATE") return "Date";
   if (t === "TEXTE") return "Text";
@@ -114,6 +114,7 @@ export function PublicSignClient({ session }: { session: PublicSignSession }) {
         const t = c.type.toUpperCase();
         return (
           t === "SIGNATURE" ||
+          t === "BLOC_SIGNATURE" ||
           t === "PARAPHE" ||
           t === "INITIALES" ||
           t === "TEXTE" ||
@@ -394,7 +395,10 @@ export function PublicSignClient({ session }: { session: PublicSignSession }) {
                 const interactive = session.canSign && c.mine && !filled;
                 const t = c.type.toUpperCase();
                 const isStamp =
-                  t === "SIGNATURE" || t === "PARAPHE" || t === "INITIALES";
+                  t === "SIGNATURE" ||
+                  t === "BLOC_SIGNATURE" ||
+                  t === "PARAPHE" ||
+                  t === "INITIALES";
                 // Agrandit un peu les petites zones pour le tampon Adobe
                 const displayH =
                   filled && isStamp

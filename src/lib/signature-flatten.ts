@@ -142,13 +142,49 @@ export async function buildSignedPdf(input: {
     if (valeur.startsWith("data:image/")) {
       const parsed = dataUrlToBytes(valeur);
       if (!parsed) continue;
+      // Tampon un peu plus lisible que la petite zone UI
+      const drawW = Math.max(w, width * 0.18);
+      const drawH = Math.max(h, height * 0.09);
+      const drawX = Math.min(x, width - drawW);
+      const drawY = Math.max(0, Math.min(y, height - drawH));
       try {
-        const img = parsed.mime.includes("png")
-          ? await pdf.embedPng(parsed.bytes)
-          : await pdf.embedJpg(parsed.bytes);
-        page.drawImage(img, { x, y, width: w, height: h });
-      } catch {
-        // ignore invalid stamp image
+        let img;
+        if (parsed.mime.includes("png") || parsed.mime.includes("webp")) {
+          try {
+            img = await pdf.embedPng(parsed.bytes);
+          } catch {
+            img = await pdf.embedJpg(parsed.bytes);
+          }
+        } else {
+          try {
+            img = await pdf.embedJpg(parsed.bytes);
+          } catch {
+            img = await pdf.embedPng(parsed.bytes);
+          }
+        }
+        page.drawImage(img, {
+          x: drawX,
+          y: drawY,
+          width: drawW,
+          height: drawH,
+        });
+      } catch (e) {
+        console.error("[buildSignedPdf] stamp image", a.type, e);
+        page.drawRectangle({
+          x: drawX,
+          y: drawY,
+          width: drawW,
+          height: drawH,
+          borderColor: rgb(0.15, 0.35, 0.7),
+          borderWidth: 1,
+        });
+        page.drawText("Signature", {
+          x: drawX + 4,
+          y: drawY + drawH / 2 - 4,
+          size: 9,
+          font,
+          color: rgb(0.15, 0.35, 0.7),
+        });
       }
       continue;
     }

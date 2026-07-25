@@ -205,7 +205,20 @@ async function activateNextSigners(
   const signers = actors.filter((d) => d.role === "SIGNATAIRE");
   const initiateur = actors.find((d) => d.role === "INITIATEUR");
 
-  if (actors.every((d) => d.statut === "SIGNE")) {
+  // Complet dès que tous les SIGNATAIRES ont signé (l'initiateur n'bloque plus)
+  const signersDone =
+    signers.length > 0 && signers.every((d) => d.statut === "SIGNE");
+  if (signersDone || actors.every((d) => d.statut === "SIGNE")) {
+    if (initiateur && initiateur.statut !== "SIGNE") {
+      await prisma.signatureDestinataire.update({
+        where: { id: initiateur.id },
+        data: {
+          statut: "SIGNE",
+          signeAt: new Date(),
+          motifRefus: null,
+        },
+      });
+    }
     await prisma.signatureEnvelope.update({
       where: { id: envelopeId },
       data: { statut: "COMPLETE", completeAt: new Date() },
@@ -229,8 +242,8 @@ async function activateNextSigners(
   const newlyReadyIds: string[] = [];
 
   if (envelope.ordreObligatoire) {
-    // Un seul à la fois, dans l'ordre (signataires puis initiateur)
-    const next = stillOpen[0];
+    const nextSigner = stillOpen.find((d) => d.role === "SIGNATAIRE");
+    const next = nextSigner || stillOpen[0];
     if (next) {
       await prisma.signatureDestinataire.update({
         where: { id: next.id },
@@ -241,7 +254,6 @@ async function activateNextSigners(
     return { completed: false, newlyReadyIds };
   }
 
-  // Parallèle : tous les signataires restants ; initiateur seulement après
   const unsignedSigners = signers.filter(
     (d) => d.statut !== "SIGNE" && d.statut !== "REFUSE"
   );
@@ -251,15 +263,6 @@ async function activateNextSigners(
       data: { statut: "A_SIGNER" },
     });
     newlyReadyIds.push(...unsignedSigners.map((d) => d.id));
-    return { completed: false, newlyReadyIds };
-  }
-
-  if (initiateur && initiateur.statut !== "SIGNE") {
-    await prisma.signatureDestinataire.update({
-      where: { id: initiateur.id },
-      data: { statut: "A_SIGNER" },
-    });
-    newlyReadyIds.push(initiateur.id);
   }
   return { completed: false, newlyReadyIds };
 }

@@ -131,7 +131,20 @@ async function activateNextSigners(
   const signers = actors.filter((d) => d.role === "SIGNATAIRE");
   const initiateur = actors.find((d) => d.role === "INITIATEUR");
 
-  if (actors.every((d) => d.statut === "SIGNE")) {
+  // Complet dès que tous les SIGNATAIRES ont signé (l'initiateur n'bloque plus)
+  const signersDone =
+    signers.length > 0 && signers.every((d) => d.statut === "SIGNE");
+  if (signersDone || actors.every((d) => d.statut === "SIGNE")) {
+    if (initiateur && initiateur.statut !== "SIGNE") {
+      await prisma.signatureDestinataire.update({
+        where: { id: initiateur.id },
+        data: {
+          statut: "SIGNE",
+          signeAt: new Date(),
+          motifRefus: null,
+        },
+      });
+    }
     await prisma.signatureEnvelope.update({
       where: { id: envelopeId },
       data: { statut: "COMPLETE", completeAt: new Date() },
@@ -154,7 +167,8 @@ async function activateNextSigners(
   const newlyReadyIds: string[] = [];
 
   if (envelope.ordreObligatoire) {
-    const next = stillOpen[0];
+    const nextSigner = stillOpen.find((d) => d.role === "SIGNATAIRE");
+    const next = nextSigner || stillOpen[0];
     if (next) {
       await prisma.signatureDestinataire.update({
         where: { id: next.id },
@@ -174,15 +188,6 @@ async function activateNextSigners(
       data: { statut: "A_SIGNER" },
     });
     newlyReadyIds.push(...unsignedSigners.map((d) => d.id));
-    return { completed: false, newlyReadyIds };
-  }
-
-  if (initiateur && initiateur.statut !== "SIGNE") {
-    await prisma.signatureDestinataire.update({
-      where: { id: initiateur.id },
-      data: { statut: "A_SIGNER" },
-    });
-    newlyReadyIds.push(initiateur.id);
   }
   return { completed: false, newlyReadyIds };
 }
@@ -269,6 +274,7 @@ export async function submitPublicSignature(
     const t = c.type.toUpperCase();
     return (
       t === "SIGNATURE" ||
+      t === "BLOC_SIGNATURE" ||
       t === "PARAPHE" ||
       t === "INITIALES" ||
       t === "TEXTE" ||
@@ -298,6 +304,38 @@ export async function submitPublicSignature(
     await prisma.signatureChamp.update({
       where: { id: f.id },
       data: { valeur },
+    });
+  }
+
+  // Remplit les tampons vides du destinataire avec la signature principale
+  if (sig) {
+    const stampTypes = new Set([
+      "SIGNATURE",
+      "BLOC_SIGNATURE",
+      "PARAPHE",
+      "INITIALES",
+    ]);
+    for (const f of myFields) {
+      const t = f.type.toUpperCase();
+      if (!stampTypes.has(t)) continue;
+      const existing = (fieldValues[f.id] || f.valeur || "").trim();
+      if (existing) continue;
+      await prisma.signatureChamp.update({
+        where: { id: f.id },
+        data: { valeur: sig },
+      });
+    }
+  }
+
+  // Date auto si champ DATE vide
+  const today = new Date().toLocaleDateString("fr-FR");
+  for (const f of myFields) {
+    if (f.type.toUpperCase() !== "DATE") continue;
+    const existing = (fieldValues[f.id] || f.valeur || "").trim();
+    if (existing) continue;
+    await prisma.signatureChamp.update({
+      where: { id: f.id },
+      data: { valeur: today },
     });
   }
 
