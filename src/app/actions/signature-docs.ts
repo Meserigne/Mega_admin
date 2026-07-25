@@ -135,13 +135,6 @@ async function sendInviteEmails(
   });
   if (!envelope) return { links: [], mail: null };
 
-  const creator = envelope.createurId
-    ? await prisma.user.findUnique({
-        where: { id: envelope.createurId },
-        select: { email: true },
-      })
-    : null;
-
   const links: { email: string; nom: string; url: string }[] = [];
   const targets = envelope.destinataires.filter((d) =>
     destinataireIds.includes(d.id)
@@ -156,7 +149,6 @@ async function sendInviteEmails(
       to: d.email,
       destinataireNom: d.nom,
       createurNom: envelope.createurNom,
-      createurEmail: creator?.email,
       documentTitle: envelope.titre,
       message: envelope.message,
       accessToken: token,

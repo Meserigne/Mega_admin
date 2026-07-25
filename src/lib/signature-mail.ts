@@ -1,4 +1,9 @@
-import { sendMail, isMailConfigured, type SendMailResult } from "@/lib/mail";
+import {
+  sendMail,
+  isMailConfigured,
+  signatureContactEmail,
+  type SendMailResult,
+} from "@/lib/mail";
 
 const BRAND = "#1e3a5f";
 const ACCENT = "#2563eb";
@@ -60,6 +65,7 @@ export async function sendSignatureInviteEmail(input: {
   to: string;
   destinataireNom: string;
   createurNom: string;
+  /** Ignoré : on affiche toujours l’adresse générique Signature. */
   createurEmail?: string | null;
   documentTitle: string;
   message?: string | null;
@@ -68,6 +74,7 @@ export async function sendSignatureInviteEmail(input: {
   const link = signUrlForToken(input.accessToken);
   const doc = escapeHtml(input.documentTitle);
   const requester = escapeHtml(input.createurNom);
+  const contactEmail = escapeHtml(signatureContactEmail());
   const msg = escapeHtml(
     input.message?.trim() || "Veuillez vérifier et signer ce document."
   );
@@ -86,7 +93,7 @@ export async function sendSignatureInviteEmail(input: {
     <p style="margin:0 0 8px;font-size:14px;color:#4b5563;">${msg}</p>
     <p style="margin:0;font-size:13px;color:#6b7280;">
       <strong style="color:#111827;text-transform:uppercase;letter-spacing:.02em;">${requester}</strong><br/>
-      ${escapeHtml(input.createurEmail || "")}
+      MEGA Signature · <a href="mailto:${contactEmail}" style="color:${ACCENT};text-decoration:none;">${contactEmail}</a>
     </p>
     <hr style="border:none;border-top:1px solid #e5e7eb;margin:24px 0;" />
     <p style="margin:0;font-size:13px;color:#6b7280;">

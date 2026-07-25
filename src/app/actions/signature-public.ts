@@ -2,6 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { prisma } from "@/lib/prisma";
+import { signatureContactEmail } from "@/lib/mail";
 import {
   appBaseUrl,
   sendSignatureCompletedEmail,
@@ -62,13 +63,6 @@ async function sendInviteEmails(
   });
   if (!envelope) return;
 
-  const creator = envelope.createurId
-    ? await prisma.user.findUnique({
-        where: { id: envelope.createurId },
-        select: { email: true },
-      })
-    : null;
-
   for (const d of envelope.destinataires.filter((x) =>
     destinataireIds.includes(x.id)
   )) {
@@ -84,7 +78,6 @@ async function sendInviteEmails(
       to: d.email,
       destinataireNom: d.nom,
       createurNom: envelope.createurNom,
-      createurEmail: creator?.email,
       documentTitle: envelope.titre,
       message: envelope.message,
       accessToken: token,
@@ -208,13 +201,6 @@ export async function getPublicSignSession(
   const envelope = dest.envelope;
   if (envelope.deletedAt) return null;
 
-  const creator = envelope.createurId
-    ? await prisma.user.findUnique({
-        where: { id: envelope.createurId },
-        select: { email: true },
-      })
-    : null;
-
   const canSign =
     envelope.statut === "EN_COURS" && dest.statut === "A_SIGNER";
 
@@ -227,7 +213,7 @@ export async function getPublicSignSession(
     fichierNom: envelope.fichierNom,
     fichierMime: envelope.fichierMime,
     createurNom: envelope.createurNom,
-    createurEmail: creator?.email ?? null,
+    createurEmail: signatureContactEmail(),
     destinataire: {
       id: dest.id,
       nom: dest.nom,

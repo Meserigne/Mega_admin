@@ -28,8 +28,24 @@ function mailFrom(): string {
   return (
     process.env.MAIL_FROM?.trim() ||
     process.env.SMTP_FROM?.trim() ||
-    "MEGA Signature <noreply@mega.sn>"
+    "MEGA Signature <contact@mega-sn.com>"
   );
+}
+
+/** Adresse e-mail publique pour les échanges Signature (jamais le mail perso du créateur). */
+export function signatureContactEmail(): string {
+  const dedicated = process.env.SIGNATURE_CONTACT_EMAIL?.trim();
+  if (dedicated && dedicated.includes("@")) return dedicated.toLowerCase();
+
+  const from = mailFrom();
+  const angled = from.match(/<([^>]+)>/);
+  const raw = (angled?.[1] || from).trim();
+  if (raw.includes("@")) return raw.toLowerCase();
+  return "contact@mega-sn.com";
+}
+
+export function mailFromDisplay(): string {
+  return mailFrom();
 }
 
 function recipients(to: string | string[]): string[] {
