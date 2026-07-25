@@ -25,7 +25,7 @@ async function getQpdf(): Promise<QpdfModule> {
       const mod = await createModule({
         locateFile: () => resolveWasmPath(),
         noInitialRun: true,
-      });
+      } as { locateFile: () => string });
       return mod as unknown as QpdfModule;
     })();
   }
