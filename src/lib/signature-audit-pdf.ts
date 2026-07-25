@@ -1,4 +1,5 @@
 import { PDFDocument, rgb, StandardFonts, type PDFFont, type PDFPage } from "pdf-lib";
+import { pdfSafeText } from "@/lib/pdf-text";
 
 export type AuditHistoryEvent = {
   at: Date;
@@ -49,7 +50,7 @@ function drawWrapped(
   }
 ): number {
   const lineHeight = opts.lineHeight ?? opts.size + 4;
-  const words = text.split(/\s+/);
+  const words = pdfSafeText(text).split(/\s+/).filter(Boolean);
   let line = "";
   let y = opts.y;
   for (const word of words) {
@@ -107,7 +108,10 @@ export async function appendFinalAuditReportPage(
 
   let y = height - 64;
 
-  page.drawText(`${report.documentTitle} — Rapport d'audit final`, {
+  const title = pdfSafeText(
+    `${report.documentTitle} — Rapport d'audit final`
+  );
+  page.drawText(title, {
     x: margin,
     y,
     size: 14,
@@ -139,20 +143,20 @@ export async function appendFinalAuditReportPage(
 
   const rows: [string, string][] = [
     ["Créé le", fmtDate(report.createdAt)],
-    ["Par", report.createdBy],
-    ["Statut", report.status],
-    ["ID transaction", report.transactionId],
+    ["Par", pdfSafeText(report.createdBy)],
+    ["Statut", pdfSafeText(report.status)],
+    ["ID transaction", pdfSafeText(report.transactionId)],
   ];
   let rowY = y - 16;
   for (const [k, v] of rows) {
-    page.drawText(`${k} :`, {
+    page.drawText(pdfSafeText(`${k} :`), {
       x: margin + 12,
       y: rowY,
       size: 9,
       font: fontBold,
       color: MUTED,
     });
-    page.drawText(v.slice(0, 72), {
+    page.drawText(pdfSafeText(v).slice(0, 72), {
       x: margin + 110,
       y: rowY,
       size: 9,
@@ -165,7 +169,9 @@ export async function appendFinalAuditReportPage(
 
   y -= boxH + 28;
 
-  page.drawText(`Historique — ${report.documentTitle}`, {
+  page.drawText(
+    pdfSafeText(`Historique — ${report.documentTitle}`),
+    {
     x: margin,
     y,
     size: 12,
@@ -196,7 +202,7 @@ export async function appendFinalAuditReportPage(
       color: BLUE,
     });
 
-    page.drawText(ev.title, {
+    page.drawText(pdfSafeText(ev.title), {
       x: margin + 20,
       y,
       size: 10,
@@ -236,7 +242,7 @@ export async function appendFinalAuditReportPage(
     color: BOX_BORDER,
   });
 
-  page.drawText("Certifié par MEGA Signature", {
+  page.drawText(pdfSafeText("Certifié par MEGA Signature"), {
     x: margin,
     y: 70,
     size: 10,
@@ -244,7 +250,9 @@ export async function appendFinalAuditReportPage(
     color: BLUE,
   });
   page.drawText(
-    "Document verrouillé — aucune modification n'est autorisée après certification.",
+    pdfSafeText(
+      "Document verrouillé — aucune modification n'est autorisée après certification."
+    ),
     {
       x: margin,
       y: 56,
@@ -255,7 +263,9 @@ export async function appendFinalAuditReportPage(
     }
   );
   page.drawText(
-    "L'identité des signataires et l'horodatage des événements sont enregistrés par le serveur MEGA.",
+    pdfSafeText(
+      "L'identité des signataires et l'horodatage des événements sont enregistrés par le serveur MEGA."
+    ),
     {
       x: margin,
       y: 44,

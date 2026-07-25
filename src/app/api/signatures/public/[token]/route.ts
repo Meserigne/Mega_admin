@@ -48,18 +48,31 @@ export async function GET(
     if (signed) {
       try {
         const flattened = await buildSignedPdfForEnvelope(envelope.id);
-        if (flattened) {
-          return new NextResponse(Buffer.from(flattened.bytes), {
-            headers: {
-              "Content-Type": "application/pdf",
-              "Content-Length": String(flattened.bytes.byteLength),
-              "Content-Disposition": `inline; filename="${encodeURIComponent(flattened.fileName)}"`,
-              "Cache-Control": "private, no-store",
-            },
-          });
+        if (!flattened) {
+          return NextResponse.json(
+            { error: "Impossible de générer le PDF signé." },
+            { status: 500 }
+          );
         }
+        return new NextResponse(Buffer.from(flattened.bytes), {
+          headers: {
+            "Content-Type": "application/pdf",
+            "Content-Length": String(flattened.bytes.byteLength),
+            "Content-Disposition": `inline; filename="${encodeURIComponent(flattened.fileName)}"`,
+            "Cache-Control": "private, no-store",
+          },
+        });
       } catch (e) {
         console.error("public signed pdf error:", e);
+        return NextResponse.json(
+          {
+            error:
+              e instanceof Error
+                ? `Génération PDF signé échouée : ${e.message}`
+                : "Génération PDF signé échouée.",
+          },
+          { status: 500 }
+        );
       }
     }
 

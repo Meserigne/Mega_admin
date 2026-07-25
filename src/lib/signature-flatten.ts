@@ -4,6 +4,7 @@ import {
   appendFinalAuditReportPage,
   type SignatureAuditReport,
 } from "@/lib/signature-audit-pdf";
+import { pdfSafeText } from "@/lib/pdf-text";
 
 export type StampAnnotation = {
   type: string;
@@ -88,7 +89,11 @@ export async function buildSignedPdf(input: {
       } catch {
         const page = pdf.addPage([595, 842]);
         const font = await pdf.embedFont(StandardFonts.Helvetica);
-        page.drawText("Aperçu image non convertible — ouvrez le fichier original.", {
+        page.drawText(
+          pdfSafeText(
+            "Aperçu image non convertible — ouvrez le fichier original."
+          ),
+          {
           x: 40,
           y: 800,
           size: 11,
@@ -113,14 +118,16 @@ export async function buildSignedPdf(input: {
     pdf = await PDFDocument.create();
     const page = pdf.addPage([595, 842]);
     const font = await pdf.embedFont(StandardFonts.Helvetica);
-    page.drawText(`Document : ${input.fileName}`, {
+    page.drawText(pdfSafeText(`Document : ${input.fileName}`), {
       x: 40,
       y: 800,
       size: 12,
       font,
     });
     page.drawText(
-      "Format non prévisualisable en PDF signé. Les annotations sont listées dans Mega Signature.",
+      pdfSafeText(
+        "Format non prévisualisable en PDF signé. Les annotations sont listées dans Mega Signature."
+      ),
       { x: 40, y: 780, size: 10, font, color: rgb(0.3, 0.3, 0.3) }
     );
   }
@@ -191,7 +198,9 @@ export async function buildSignedPdf(input: {
 
     if (valeur) {
       const size = Math.min(14, Math.max(8, h * 0.45));
-      page.drawText(valeur.slice(0, 80), {
+      const safe = pdfSafeText(valeur.slice(0, 80));
+      if (!safe) continue;
+      page.drawText(safe, {
         x: x + 2,
         y: y + h / 2 - size / 3,
         size,

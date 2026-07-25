@@ -47,21 +47,34 @@ export async function GET(
   }
 
   try {
-    if (signed && (envelope.champs.length > 0 || envelope.statut === "COMPLETE")) {
+    if (signed) {
       try {
         const flattened = await buildSignedPdfForEnvelope(envelope.id);
-        if (flattened) {
-          return new NextResponse(Buffer.from(flattened.bytes), {
-            headers: {
-              "Content-Type": "application/pdf",
-              "Content-Length": String(flattened.bytes.byteLength),
-              "Content-Disposition": `inline; filename="${encodeURIComponent(flattened.fileName)}"`,
-              "Cache-Control": "private, no-store",
-            },
-          });
+        if (!flattened) {
+          return NextResponse.json(
+            { error: "Impossible de générer le PDF signé (fichier source manquant)." },
+            { status: 500 }
+          );
         }
+        return new NextResponse(Buffer.from(flattened.bytes), {
+          headers: {
+            "Content-Type": "application/pdf",
+            "Content-Length": String(flattened.bytes.byteLength),
+            "Content-Disposition": `inline; filename="${encodeURIComponent(flattened.fileName)}"`,
+            "Cache-Control": "private, no-store",
+          },
+        });
       } catch (e) {
         console.error("signed pdf flatten error:", e);
+        return NextResponse.json(
+          {
+            error:
+              e instanceof Error
+                ? `Génération PDF signé échouée : ${e.message}`
+                : "Génération PDF signé échouée.",
+          },
+          { status: 500 }
+        );
       }
     }
 
