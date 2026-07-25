@@ -16,12 +16,18 @@ import {
 } from "lucide-react";
 import { createAndSendEnvelope, getEnvelopeShareSource } from "@/app/actions/signature-docs";
 import { usePermissions } from "@/components/PermissionsProvider";
+import { PdfPageViewer } from "@/components/PdfPageViewer";
 import { Alert, Button, Input, Select } from "@/components/ui";
 import {
   DEST_COLORS,
   FIELD_PALETTE,
   type ChampType,
 } from "@/lib/signature-docs";
+import {
+  filterRememberedContacts,
+  rememberContacts,
+  type RememberedContact,
+} from "@/lib/signature-email-memory";
 import {
   clearShareSource,
   readShareSource,
@@ -40,6 +46,10 @@ type PlacedField = {
   largeur: number;
   hauteur: number;
 };
+
+function isSignatureChamp(type: ChampType) {
+  return type === "SIGNATURE" || type === "BLOC_SIGNATURE";
+}
 
 function fileToBase64(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -169,11 +179,55 @@ export function SignatureWizardClient() {
   const preloadedFrom = useRef<string | null>(null);
   const MIN_W = 0.06;
   const MIN_H = 0.035;
+  const [docNatural, setDocNatural] = useState<{ w: number; h: number } | null>(
+    null
+  );
+  const [docBox, setDocBox] = useState({ w: 720, h: 1018 });
+  /** 100 % = document ajusté à la largeur utile (pas le zoom navigateur PDF). */
+  const [zoomPct, setZoomPct] = useState(100);
+  const [emailSuggestions, setEmailSuggestions] = useState<
+    RememberedContact[]
+  >([]);
+  const [emailFocusId, setEmailFocusId] = useState<string | null>(null);
 
   const validDests = useMemo(
     () => dests.filter((d) => d.email.trim()),
     [dests]
   );
+
+  const missingSignatureDests = useMemo(
+    () =>
+      validDests.filter(
+        (d) =>
+          !fields.some(
+            (f) => f.destinataireId === d.id && isSignatureChamp(f.type)
+          )
+      ),
+    [validDests, fields]
+  );
+
+  useEffect(() => {
+    function measure() {
+      const stage = canvasRef.current?.parentElement;
+      if (!stage) return;
+      const availW = Math.max(stage.clientWidth - 48, 280);
+      const ratio =
+        docNatural && docNatural.w > 0
+          ? docNatural.w / docNatural.h
+          : 210 / 297;
+      const fitW = Math.min(availW, 860);
+      const w = Math.round(fitW * (zoomPct / 100));
+      const h = Math.round(w / ratio);
+      setDocBox((prev) =>
+        Math.abs(prev.w - w) < 3 && Math.abs(prev.h - h) < 3
+          ? prev
+          : { w, h }
+      );
+    }
+    measure();
+    window.addEventListener("resize", measure);
+    return () => window.removeEventListener("resize", measure);
+  }, [docNatural, step, zoomPct]);
 
   useEffect(() => {
     if (!activeDestId && dests[0]) setActiveDestId(dests[0].id);
@@ -473,21 +527,44 @@ export function SignatureWizardClient() {
       );
       return;
     }
-    const missingSig = validDests.some(
-      (d) =>
-        !fields.some(
-          (f) =>
-            f.destinataireId === d.id &&
-            (f.type === "SIGNATURE" || f.type === "BLOC_SIGNATURE")
-        )
-    );
-    if (missingSig) {
+    if (missingSignatureDests.length > 0) {
+      const names = missingSignatureDests
+        .map((d) => d.nom || d.email)
+        .join(", ");
       setError(
-        "Chaque destinataire doit avoir au moins un champ Signature ou Bloc de signature."
+        `Chaque destinataire doit avoir un champ Signature ou Bloc de signature. Manque : ${names}. Sélectionnez le destinataire à gauche, puis placez « Signature ».`
       );
+      setActiveDestId(missingSignatureDests[0].id);
+      setPendingType({
+        type: "SIGNATURE",
+        label: "Signature",
+        w: 0.28,
+        h: 0.08,
+      });
       return;
     }
     setStep("envoyer");
+  }
+
+  function placeMissingSignatures() {
+    setError(null);
+    if (missingSignatureDests.length === 0) return;
+    setFields((rows) => {
+      const next = [...rows];
+      missingSignatureDests.forEach((d, i) => {
+        next.push({
+          id: crypto.randomUUID(),
+          type: "SIGNATURE",
+          label: "Signature",
+          destinataireId: d.id,
+          posX: 0.1 + (i % 2) * 0.35,
+          posY: Math.max(0.55, 0.78 - Math.floor(i / 2) * 0.12),
+          largeur: 0.28,
+          hauteur: 0.08,
+        });
+      });
+      return next;
+    });
   }
 
   function placeField(x: number, y: number) {
@@ -574,6 +651,12 @@ export function SignatureWizardClient() {
       setMailConfigured(result.mailConfigured !== false);
       setMailDelivered(Boolean(result.mailDelivered));
       setMailError(result.mailError ?? null);
+      rememberContacts(
+        validDests.map((d) => ({
+          email: d.email.trim(),
+          nom: d.nom.trim(),
+        }))
+      );
       setStep("envoye");
     } catch (e) {
       setLoading(false);
@@ -727,14 +810,63 @@ export function SignatureWizardClient() {
                     <span className="text-xs font-medium">{index + 1}</span>
                   </div>
                   <div className="grid flex-1 gap-2 sm:grid-cols-2">
-                    <Input
-                      placeholder="Adresse e-mail *"
-                      type="email"
-                      value={d.email}
-                      onChange={(e) =>
-                        updateDest(d.id, { email: e.target.value })
-                      }
-                    />
+                    <div className="relative">
+                      <Input
+                        placeholder="Adresse e-mail *"
+                        type="email"
+                        autoComplete="off"
+                        value={d.email}
+                        onFocus={() => {
+                          setEmailFocusId(d.id);
+                          setEmailSuggestions(
+                            filterRememberedContacts(d.email)
+                          );
+                        }}
+                        onBlur={() => {
+                          // délai pour permettre le clic sur suggestion
+                          window.setTimeout(() => {
+                            setEmailFocusId((cur) =>
+                              cur === d.id ? null : cur
+                            );
+                          }, 150);
+                        }}
+                        onChange={(e) => {
+                          const value = e.target.value;
+                          updateDest(d.id, { email: value });
+                          setEmailFocusId(d.id);
+                          setEmailSuggestions(filterRememberedContacts(value));
+                        }}
+                      />
+                      {emailFocusId === d.id && emailSuggestions.length > 0 && (
+                        <ul className="absolute z-30 mt-1 max-h-40 w-full overflow-auto rounded-md border border-slate-200 bg-white py-1 text-sm shadow-lg">
+                          {emailSuggestions.map((c) => (
+                            <li key={c.email}>
+                              <button
+                                type="button"
+                                className="flex w-full flex-col px-3 py-2 text-left hover:bg-slate-50"
+                                onMouseDown={(e) => e.preventDefault()}
+                                onClick={() => {
+                                  updateDest(d.id, {
+                                    email: c.email,
+                                    nom: d.nom.trim() || c.nom || "",
+                                  });
+                                  setEmailFocusId(null);
+                                }}
+                              >
+                                <span className="font-medium text-slate-800">
+                                  {c.email}
+                                </span>
+                                {c.nom ? (
+                                  <span className="text-xs text-slate-500">
+                                    {c.nom}
+                                  </span>
+                                ) : null}
+                              </button>
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+                    </div>
                     <Input
                       placeholder="Nom"
                       value={d.nom}
@@ -848,7 +980,12 @@ export function SignatureWizardClient() {
                 Destinataires (placer les champs)
               </p>
               <ul className="mt-2 space-y-1">
-                {validDests.map((d) => (
+                {validDests.map((d) => {
+                  const sigCount = fields.filter(
+                    (f) =>
+                      f.destinataireId === d.id && isSignatureChamp(f.type)
+                  ).length;
+                  return (
                   <li key={d.id}>
                     <button
                       type="button"
@@ -863,16 +1000,36 @@ export function SignatureWizardClient() {
                         className="h-3 w-3 shrink-0 rounded-sm"
                         style={{ background: destColor(d.id) }}
                       />
-                      <span className="truncate">
+                      <span className="min-w-0 flex-1 truncate">
                         {d.nom || d.email}{" "}
                         <span className="text-xs text-slate-400">
                           (signataire)
                         </span>
                       </span>
+                      <span
+                        className={`shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-semibold ${
+                          sigCount > 0
+                            ? "bg-emerald-100 text-emerald-800"
+                            : "bg-red-100 text-red-700"
+                        }`}
+                        title="Champs Signature / Bloc"
+                      >
+                        {sigCount > 0 ? `${sigCount} sig.` : "0 sig."}
+                      </span>
                     </button>
                   </li>
-                ))}
+                  );
+                })}
               </ul>
+              {missingSignatureDests.length > 0 && (
+                <button
+                  type="button"
+                  onClick={placeMissingSignatures}
+                  className="mt-2 w-full rounded-md border border-[var(--c-blue-300)] bg-[var(--c-blue-50)] px-2 py-2 text-xs font-medium text-[var(--c-blue-800)] hover:bg-[var(--c-blue-100)]"
+                >
+                  Placer les signatures manquantes
+                </button>
+              )}
             </div>
 
             <div className="border-t border-slate-100 px-2 py-2">
@@ -956,24 +1113,62 @@ export function SignatureWizardClient() {
           </aside>
 
           <main className="flex flex-1 flex-col bg-slate-200/70">
-            <div className="flex items-center justify-between border-b border-slate-200 bg-white px-4 py-2 text-xs text-slate-500">
+            <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 bg-white px-4 py-2 text-xs text-slate-500">
               <span>
                 {pendingType
-                  ? `Cliquez sur le document pour placer « ${pendingType.label} »`
+                  ? `Cliquez sur le document pour placer « ${pendingType.label} » pour ${
+                      validDests.find((d) => d.id === activeDestId)?.nom ||
+                      validDests.find((d) => d.id === activeDestId)?.email ||
+                      "le destinataire sélectionné"
+                    }`
                   : selectedFieldId
                     ? "Glissez le champ pour le repositionner"
-                    : "Sélectionnez un champ, placez-le, puis déplacez-le librement"}
+                    : "Sélectionnez un destinataire, puis un champ Signature"}
               </span>
-              <span>{fields.length} champ(s)</span>
+              <span className="flex items-center gap-3 font-medium text-slate-600">
+                <span className="inline-flex items-center gap-1 rounded-md border border-slate-200 bg-slate-50 px-1.5 py-0.5">
+                  <button
+                    type="button"
+                    className="rounded px-1.5 py-0.5 hover:bg-white disabled:opacity-40"
+                    disabled={zoomPct <= 50}
+                    onClick={() => setZoomPct((z) => Math.max(50, z - 10))}
+                    aria-label="Zoom arrière"
+                  >
+                    −
+                  </button>
+                  <button
+                    type="button"
+                    className="min-w-[4.5rem] rounded px-1 py-0.5 tabular-nums hover:bg-white"
+                    onClick={() => setZoomPct(100)}
+                    title="Réinitialiser : largeur utile = 100 %"
+                  >
+                    {zoomPct} %
+                  </button>
+                  <button
+                    type="button"
+                    className="rounded px-1.5 py-0.5 hover:bg-white disabled:opacity-40"
+                    disabled={zoomPct >= 200}
+                    onClick={() => setZoomPct((z) => Math.min(200, z + 10))}
+                    aria-label="Zoom avant"
+                  >
+                    +
+                  </button>
+                </span>
+                <span>{fields.length} champ(s)</span>
+              </span>
             </div>
 
             <div className="flex flex-1 items-start justify-center overflow-auto p-6">
               <div
                 ref={canvasRef}
-                className={`relative w-full max-w-3xl touch-none bg-white shadow-lg ${
+                className={`relative touch-none bg-white shadow-lg ${
                   pendingType ? "cursor-crosshair" : "cursor-default"
                 }`}
-                style={{ minHeight: 640 }}
+                style={{
+                  width: docBox.w,
+                  height: docBox.h,
+                  maxWidth: "100%",
+                }}
                 onClick={(e) => {
                   if (!pendingType || dragRef.current) return;
                   const rect = e.currentTarget.getBoundingClientRect();
@@ -991,19 +1186,37 @@ export function SignatureWizardClient() {
                   <img
                     src={previewUrl}
                     alt="Document"
-                    className="pointer-events-none w-full"
+                    className="pointer-events-none absolute inset-0 h-full w-full object-contain"
                     draggable={false}
+                    onLoad={(e) => {
+                      const img = e.currentTarget;
+                      const w = img.naturalWidth || img.width;
+                      const h = img.naturalHeight || img.height;
+                      if (w > 0 && h > 0) setDocNatural({ w, h });
+                    }}
                   />
                 )}
                 {isPdf && previewUrl && (
-                  <iframe
-                    title="PDF"
-                    src={previewUrl}
-                    className="pointer-events-none h-[70vh] w-full"
+                  <PdfPageViewer
+                    url={previewUrl}
+                    width={docBox.w}
+                    height={docBox.h}
+                    onPageSize={(size) => {
+                      setDocNatural((prev) => {
+                        if (
+                          prev &&
+                          Math.abs(prev.w - size.w) < 0.5 &&
+                          Math.abs(prev.h - size.h) < 0.5
+                        ) {
+                          return prev;
+                        }
+                        return size;
+                      });
+                    }}
                   />
                 )}
                 {!isImage && !isPdf && (
-                  <div className="flex h-[640px] flex-col items-center justify-center p-8 text-center text-slate-500">
+                  <div className="flex h-full flex-col items-center justify-center p-8 text-center text-slate-500">
                     <p className="font-medium text-slate-700">{file?.name}</p>
                     <p className="mt-2 text-sm">
                       Aperçu limité — placez et déplacez les champs ici.
@@ -1013,6 +1226,7 @@ export function SignatureWizardClient() {
 
                 {fields.map((f) => {
                   const selected = selectedFieldId === f.id;
+                  const dest = dests.find((d) => d.id === f.destinataireId);
                   const handles: {
                     id: "nw" | "ne" | "sw" | "se" | "n" | "s" | "e" | "w";
                     className: string;
@@ -1068,8 +1282,8 @@ export function SignatureWizardClient() {
                         <GripVertical className="h-3 w-3 shrink-0 opacity-60" />
                         <span className="truncate">
                           {f.label}
-                          {(f.type === "SIGNATURE" ||
-                            f.type === "BLOC_SIGNATURE") && (
+                          {dest ? ` · ${dest.nom || dest.email}` : ""}
+                          {isSignatureChamp(f.type) && (
                             <span className="text-red-500"> *</span>
                           )}
                         </span>
@@ -1107,7 +1321,8 @@ export function SignatureWizardClient() {
                       ))}
                     </div>
                   );
-                })}              </div>
+                })}
+              </div>
             </div>
           </main>
         </div>
