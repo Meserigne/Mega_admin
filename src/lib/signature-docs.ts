@@ -1,3 +1,6 @@
+/** Durée de rétention en corbeille (jours). */
+export const SIGNATURE_TRASH_DAYS = 30;
+
 export const ENVELOPE_STATUTS = [
   "BROUILLON",
   "EN_COURS",

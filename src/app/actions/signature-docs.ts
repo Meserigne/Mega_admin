@@ -10,6 +10,7 @@ import {
   DEST_STATUT_LABELS,
   ENVELOPE_STATUT_LABELS,
   isAllowedSignatureFile,
+  SIGNATURE_TRASH_DAYS,
   type DestStatut,
   type EnvelopeStatut,
 } from "@/lib/signature-docs";
@@ -56,9 +57,6 @@ export type EnvelopeListItem = {
   monStatut: string | null;
   deletedAt?: string | null;
 };
-
-/** Durée de rétention en corbeille (jours). */
-export const SIGNATURE_TRASH_DAYS = 30;
 
 export type EnvelopeDetail = {
   id: string;

@@ -16,9 +16,9 @@ import {
   deleteEnvelope,
   purgeEnvelope,
   restoreEnvelope,
-  SIGNATURE_TRASH_DAYS,
   type EnvelopeListItem,
 } from "@/app/actions/signature-docs";
+import { SIGNATURE_TRASH_DAYS } from "@/lib/signature-docs";
 import { Alert, Button, Card, DataTable, PageHeader } from "@/components/ui";
 
 function statusClass(statut: string) {
