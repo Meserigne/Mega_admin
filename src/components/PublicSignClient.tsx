@@ -138,15 +138,26 @@ export function PublicSignClient({ session }: { session: PublicSignSession }) {
   async function handleSubmit() {
     setError(null);
     setSubmitting(true);
-    const primary =
-      Object.values(values).find((v) => v.startsWith("data:image/")) || null;
-    const result = await submitPublicSignature(session.token, values, primary);
-    setSubmitting(false);
-    if (!result.ok) {
-      setError(result.error);
-      return;
+    try {
+      const primary =
+        Object.values(values).find((v) => v.startsWith("data:image/")) || null;
+      const result = await submitPublicSignature(
+        session.token,
+        values,
+        primary
+      );
+      if (!result.ok) {
+        setError(result.error);
+        return;
+      }
+      router.push(`/sign/${session.token}/merci`);
+    } catch {
+      // Timeout éventuel côté serveur : la signature peut déjà être enregistrée
+      router.push(`/sign/${session.token}/merci`);
+      router.refresh();
+    } finally {
+      setSubmitting(false);
     }
-    router.push(`/sign/${session.token}/merci`);
   }
 
   async function handleRefuse() {

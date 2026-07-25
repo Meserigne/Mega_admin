@@ -1,6 +1,8 @@
 "use server";
 
+import { randomBytes } from "crypto";
 import { revalidatePath } from "next/cache";
+import { after } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { signatureContactEmail } from "@/lib/mail";
 import {
@@ -10,7 +12,6 @@ import {
   signUrlForToken,
 } from "@/lib/signature-mail";
 import { buildSignedPdfForEnvelope } from "@/lib/signature-pdf";
-import { randomBytes } from "crypto";
 
 function newAccessToken() {
   return randomBytes(32).toString("hex");
@@ -92,18 +93,24 @@ async function sendCompletedEmails(envelopeId: string) {
   });
   if (!envelope || envelope.statut !== "COMPLETE") return;
 
-  const pdf = await buildSignedPdfForEnvelope(envelopeId);
-  if (!pdf) return;
+  let pdf: { bytes: Uint8Array; fileName: string } | null = null;
+  try {
+    pdf = await buildSignedPdfForEnvelope(envelopeId);
+  } catch (e) {
+    console.error("[sendCompletedEmails] build PDF", e);
+  }
+  const to = [
+    ...new Set(envelope.destinataires.map((d) => d.email.toLowerCase())),
+  ];
+  const viewUrl = `${appBaseUrl()}/sign/${envelope.destinataires[0]?.accessToken ?? ""}`;
 
   await sendSignatureCompletedEmail({
-    to: [
-      ...new Set(envelope.destinataires.map((d) => d.email.toLowerCase())),
-    ],
+    to,
     documentTitle: envelope.titre,
     parties: envelope.destinataires.map((d) => d.nom),
-    pdfBytes: pdf.bytes,
-    pdfFileName: pdf.fileName,
-    viewUrl: `${appBaseUrl()}/sign/${envelope.destinataires[0]?.accessToken ?? ""}`,
+    pdfBytes: pdf?.bytes ?? new Uint8Array(),
+    pdfFileName: pdf?.fileName ?? "document-signe.pdf",
+    viewUrl,
   });
 }
 
@@ -305,15 +312,27 @@ export async function submitPublicSignature(
   });
 
   const progress = await activateNextSigners(session.envelopeId);
-  if (progress.newlyReadyIds.length > 0) {
-    await sendInviteEmails(session.envelopeId, progress.newlyReadyIds);
-  }
-  if (progress.completed) {
-    await sendCompletedEmails(session.envelopeId);
-  }
 
   revalidatePath(`/sign/${token}`);
   revalidatePath(`/signatures/${session.envelopeId}`);
+
+  // E-mails + PDF certifié hors chemin critique (évite le « Submit » qui tourne)
+  const envelopeId = session.envelopeId;
+  const inviteIds = progress.newlyReadyIds;
+  const completed = progress.completed;
+  after(async () => {
+    try {
+      if (inviteIds.length > 0) {
+        await sendInviteEmails(envelopeId, inviteIds);
+      }
+      if (completed) {
+        await sendCompletedEmails(envelopeId);
+      }
+    } catch (e) {
+      console.error("[submitPublicSignature] post-sign mail/pdf", e);
+    }
+  });
+
   return { ok: true };
 }
 

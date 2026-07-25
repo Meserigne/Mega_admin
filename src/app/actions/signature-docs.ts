@@ -2,6 +2,7 @@
 
 import { randomBytes } from "crypto";
 import { revalidatePath } from "next/cache";
+import { after } from "next/server";
 import { logAudit } from "@/lib/audit";
 import { deleteArchiveFile, saveArchiveFile } from "@/lib/archive-storage";
 import { guardAuth, guardWrite, isGuardError } from "@/lib/auth-guard";
@@ -861,12 +862,6 @@ export async function signEnvelopeDocument(
   }
 
   const progress = await activateNextSigners(envelopeId);
-  if (progress.newlyReadyIds.length > 0) {
-    await sendInviteEmails(envelopeId, progress.newlyReadyIds);
-  }
-  if (progress.completed) {
-    await sendCompletedEmails(envelopeId);
-  }
 
   await logAudit({
     userId: guard.id,
@@ -875,6 +870,21 @@ export async function signEnvelopeDocument(
     entity: "SignatureEnvelope",
     entityId: envelopeId,
     details: `Signature · ${envelope.titre}`,
+  });
+
+  const inviteIds = progress.newlyReadyIds;
+  const completed = progress.completed;
+  after(async () => {
+    try {
+      if (inviteIds.length > 0) {
+        await sendInviteEmails(envelopeId, inviteIds);
+      }
+      if (completed) {
+        await sendCompletedEmails(envelopeId);
+      }
+    } catch (e) {
+      console.error("[signEnvelopeDocument] post-sign mail/pdf", e);
+    }
   });
 
   revalidateSignatureApp();

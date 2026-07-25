@@ -143,18 +143,29 @@ export async function sendSignatureCompletedEmail(input: {
     </p>
   `);
 
+  const hasPdf = input.pdfBytes && input.pdfBytes.byteLength > 0;
+
   return sendMail({
     to: input.to,
     subject: `Le document ${input.documentTitle} est signé et classé.`,
-    html,
-    text: `Le document « ${input.documentTitle} » est signé et classé. Copie PDF en pièce jointe.`,
-    attachments: [
-      {
-        filename: input.pdfFileName,
-        content: input.pdfBytes,
-        contentType: "application/pdf",
-      },
-    ],
+    html: hasPdf
+      ? html
+      : html.replace(
+          "Vous trouverez en pièce jointe une copie finale",
+          "Téléchargez la copie finale via le lien ci-dessous"
+        ),
+    text: hasPdf
+      ? `Le document « ${input.documentTitle} » est signé et classé. Copie PDF en pièce jointe.`
+      : `Le document « ${input.documentTitle} » est signé et classé. Ouvrir : ${view}`,
+    attachments: hasPdf
+      ? [
+          {
+            filename: input.pdfFileName,
+            content: input.pdfBytes,
+            contentType: "application/pdf",
+          },
+        ]
+      : undefined,
   });
 }
 
