@@ -251,7 +251,7 @@ export async function appendFinalAuditReportPage(
   });
   page.drawText(
     pdfSafeText(
-      "Document verrouille : modification et annotations desactivees apres certification."
+      "Document certifie : contenu fige (pages image) — toute alteration invalide ce certificat."
     ),
     {
       x: margin,

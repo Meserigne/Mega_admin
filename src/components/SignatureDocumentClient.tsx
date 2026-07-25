@@ -431,9 +431,9 @@ export function SignatureDocumentClient({
           {detail.statut === "COMPLETE" && (
             <div className="mt-4">
               <Alert type="info">
-                Document certifié par MEGA Signature : verrouillé contre les
-                modifications, avec une page de rapport d&apos;audit (historique)
-                en dernière page du PDF.
+                Document certifié par MEGA Signature : contenu figé (non
+                modifiable), avec une page de rapport d&apos;audit en dernière
+                page du PDF — sans mot de passe à saisir.
               </Alert>
             </div>
           )}

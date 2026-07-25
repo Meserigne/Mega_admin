@@ -34,7 +34,7 @@
     "seed": "npx tsx prisma/seed.ts"
   },
   "dependencies": {
-    "@pdfsmaller/pdf-encrypt": "^1.0.2",
+    "@napi-rs/canvas": "^1.0.2",
     "@prisma/adapter-pg": "^7.8.0",
     "@prisma/client": "^7.8.0",
     "@vercel/blob": "^2.6.1",
