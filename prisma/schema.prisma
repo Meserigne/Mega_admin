@@ -80,6 +80,8 @@ model SignatureEnvelope {
   fichierTaille    Int?
   envoyeAt         DateTime?
   completeAt       DateTime?
+  /** Soft-delete : corbeille (null = actif). Purge auto après 30 jours. */
+  deletedAt        DateTime?
   createdAt        DateTime              @default(now())
   updatedAt        DateTime              @updatedAt
   destinataires    SignatureDestinataire[]
@@ -88,6 +90,7 @@ model SignatureEnvelope {
   @@index([statut])
   @@index([createurId])
   @@index([createdAt])
+  @@index([deletedAt])
 }
 
 model SignatureDestinataire {

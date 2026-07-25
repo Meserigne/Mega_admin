@@ -31,7 +31,7 @@ export async function GET(
       champs: { orderBy: { createdAt: "asc" } },
     },
   });
-  if (!envelope) {
+  if (!envelope || envelope.deletedAt) {
     return NextResponse.json({ error: "Document introuvable." }, { status: 404 });
   }
 

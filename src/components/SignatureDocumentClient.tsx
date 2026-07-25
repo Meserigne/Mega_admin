@@ -324,7 +324,7 @@ export function SignatureDocumentClient({
   async function handleDelete() {
     if (
       !window.confirm(
-        `Supprimer définitivement « ${detail.titre} » ?\nCette action est irréversible.`
+        `Mettre « ${detail.titre} » à la corbeille ?\nRécupérable pendant 30 jours.`
       )
     ) {
       return;

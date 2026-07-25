@@ -206,6 +206,8 @@ export async function getPublicSignSession(
   if (!dest) return null;
 
   const envelope = dest.envelope;
+  if (envelope.deletedAt) return null;
+
   const creator = envelope.createurId
     ? await prisma.user.findUnique({
         where: { id: envelope.createurId },

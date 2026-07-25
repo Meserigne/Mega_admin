@@ -3,7 +3,7 @@
 import { randomBytes } from "crypto";
 import { revalidatePath } from "next/cache";
 import { logAudit } from "@/lib/audit";
-import { saveArchiveFile } from "@/lib/archive-storage";
+import { deleteArchiveFile, saveArchiveFile } from "@/lib/archive-storage";
 import { guardAuth, guardWrite, isGuardError } from "@/lib/auth-guard";
 import { prisma } from "@/lib/prisma";
 import {
@@ -54,7 +54,11 @@ export type EnvelopeListItem = {
   completeAt: string | null;
   role: "createur" | "signataire";
   monStatut: string | null;
+  deletedAt?: string | null;
 };
+
+/** Durée de rétention en corbeille (jours). */
+export const SIGNATURE_TRASH_DAYS = 30;
 
 export type EnvelopeDetail = {
   id: string;
@@ -269,13 +273,90 @@ async function activateNextSigners(
   return { completed: false, newlyReadyIds };
 }
 
+function trashCutoffDate() {
+  return new Date(Date.now() - SIGNATURE_TRASH_DAYS * 24 * 60 * 60 * 1000);
+}
+
+async function purgeExpiredTrash() {
+  const expired = await prisma.signatureEnvelope.findMany({
+    where: {
+      deletedAt: { not: null, lt: trashCutoffDate() },
+    },
+    select: { id: true, fichierChemin: true, titre: true, createurId: true, createurNom: true },
+    take: 40,
+  });
+  for (const e of expired) {
+    try {
+      await deleteArchiveFile(e.fichierChemin);
+    } catch {
+      /* ignore missing blob */
+    }
+    await prisma.signatureEnvelope.delete({ where: { id: e.id } }).catch(() => null);
+    await logAudit({
+      userId: e.createurId,
+      userNom: e.createurNom || "Système",
+      action: "PURGE",
+      entity: "SignatureEnvelope",
+      entityId: e.id,
+      details: `Document signature purgé (corbeille > ${SIGNATURE_TRASH_DAYS} j) · ${e.titre}`,
+    });
+  }
+}
+
+function mapEnvelopeListItem(
+  r: {
+    id: string;
+    titre: string;
+    statut: string;
+    createurNom: string;
+    createurId: string | null;
+    fichierNom: string;
+    createdAt: Date;
+    envoyeAt: Date | null;
+    completeAt: Date | null;
+    deletedAt?: Date | null;
+    destinataires: {
+      role: string;
+      statut: string;
+      userId: string | null;
+      email: string;
+    }[];
+  },
+  guardId: string,
+  email: string
+): EnvelopeListItem {
+  const signers = r.destinataires.filter((d) => d.role === "SIGNATAIRE");
+  const me = r.destinataires.find(
+    (d) => d.userId === guardId || emailsMatch(d.email, email)
+  );
+  return {
+    id: r.id,
+    titre: r.titre,
+    statut: r.statut,
+    statutLabel: ENVELOPE_STATUT_LABELS[r.statut as EnvelopeStatut] ?? r.statut,
+    createurNom: r.createurNom,
+    fichierNom: r.fichierNom,
+    destCount: signers.length,
+    signesCount: signers.filter((d) => d.statut === "SIGNE").length,
+    createdAt: r.createdAt.toISOString(),
+    envoyeAt: r.envoyeAt?.toISOString() ?? null,
+    completeAt: r.completeAt?.toISOString() ?? null,
+    role: r.createurId === guardId ? "createur" : "signataire",
+    monStatut: me?.statut ?? null,
+    deletedAt: r.deletedAt?.toISOString() ?? null,
+  };
+}
+
 export async function listMyEnvelopes(): Promise<EnvelopeListItem[]> {
   const guard = await guardAuth();
   if (isGuardError(guard)) return [];
 
+  await purgeExpiredTrash().catch(() => null);
+
   const email = guard.email?.toLowerCase() ?? "";
   const rows = await prisma.signatureEnvelope.findMany({
     where: {
+      deletedAt: null,
       OR: [
         { createurId: guard.id },
         ...(email
@@ -291,28 +372,28 @@ export async function listMyEnvelopes(): Promise<EnvelopeListItem[]> {
     take: 80,
   });
 
-  return rows.map((r) => {
-    const signers = r.destinataires.filter((d) => d.role === "SIGNATAIRE");
-    const me = r.destinataires.find(
-      (d) => d.userId === guard.id || emailsMatch(d.email, email)
-    );
-    return {
-      id: r.id,
-      titre: r.titre,
-      statut: r.statut,
-      statutLabel:
-        ENVELOPE_STATUT_LABELS[r.statut as EnvelopeStatut] ?? r.statut,
-      createurNom: r.createurNom,
-      fichierNom: r.fichierNom,
-      destCount: signers.length,
-      signesCount: signers.filter((d) => d.statut === "SIGNE").length,
-      createdAt: r.createdAt.toISOString(),
-      envoyeAt: r.envoyeAt?.toISOString() ?? null,
-      completeAt: r.completeAt?.toISOString() ?? null,
-      role: r.createurId === guard.id ? "createur" : "signataire",
-      monStatut: me?.statut ?? null,
-    };
+  return rows.map((r) => mapEnvelopeListItem(r, guard.id, email));
+}
+
+/** Documents en corbeille (émetteur uniquement, < 30 jours). */
+export async function listTrashedEnvelopes(): Promise<EnvelopeListItem[]> {
+  const guard = await guardAuth();
+  if (isGuardError(guard)) return [];
+
+  await purgeExpiredTrash().catch(() => null);
+
+  const email = guard.email?.toLowerCase() ?? "";
+  const rows = await prisma.signatureEnvelope.findMany({
+    where: {
+      createurId: guard.id,
+      deletedAt: { not: null, gte: trashCutoffDate() },
+    },
+    include: { destinataires: true },
+    orderBy: { deletedAt: "desc" },
+    take: 80,
   });
+
+  return rows.map((r) => mapEnvelopeListItem(r, guard.id, email));
 }
 
 export async function getEnvelopeDetail(
@@ -329,7 +410,7 @@ export async function getEnvelopeDetail(
       champs: { orderBy: { createdAt: "asc" } },
     },
   });
-  if (!r) return null;
+  if (!r || r.deletedAt) return null;
 
   const canSee =
     r.createurId === guard.id ||
@@ -415,10 +496,11 @@ export async function getEnvelopeShareSource(id: string): Promise<
       fichierNom: true,
       fichierMime: true,
       createurId: true,
+      deletedAt: true,
       destinataires: { select: { userId: true, email: true } },
     },
   });
-  if (!r) return { ok: false, error: "Document introuvable." };
+  if (!r || r.deletedAt) return { ok: false, error: "Document introuvable." };
 
   const canSee =
     r.createurId === guard.id ||
@@ -508,6 +590,7 @@ export async function createAndSendEnvelope(input: {
       select: {
         id: true,
         createurId: true,
+        deletedAt: true,
         fichierNom: true,
         fichierMime: true,
         fichierChemin: true,
@@ -516,7 +599,7 @@ export async function createAndSendEnvelope(input: {
         destinataires: { select: { userId: true, email: true } },
       },
     });
-    if (!source) {
+    if (!source || source.deletedAt) {
       return { ok: false, error: "Document source introuvable." };
     }
     const canSee =
@@ -889,7 +972,7 @@ export async function cancelEnvelope(
   return { ok: true };
 }
 
-/** Supprime définitivement un document (émetteur uniquement). */
+/** Met un document à la corbeille (émetteur uniquement, récupérable 30 j). */
 export async function deleteEnvelope(
   envelopeId: string
 ): Promise<{ ok: true } | { ok: false; error: string }> {
@@ -898,11 +981,103 @@ export async function deleteEnvelope(
 
   const envelope = await prisma.signatureEnvelope.findUnique({
     where: { id: envelopeId },
-    select: { id: true, createurId: true, titre: true },
+    select: { id: true, createurId: true, titre: true, deletedAt: true },
   });
-  if (!envelope) return { ok: false, error: "Document introuvable." };
+  if (!envelope || envelope.deletedAt) {
+    return { ok: false, error: "Document introuvable." };
+  }
   if (envelope.createurId !== guard.id) {
     return { ok: false, error: "Seul l'émetteur peut supprimer ce document." };
+  }
+
+  await prisma.signatureEnvelope.update({
+    where: { id: envelopeId },
+    data: { deletedAt: new Date() },
+  });
+
+  await logAudit({
+    userId: guard.id,
+    userNom: guard.nom,
+    action: "DELETE",
+    entity: "SignatureEnvelope",
+    entityId: envelopeId,
+    details: `Document signature mis en corbeille · ${envelope.titre}`,
+  });
+
+  revalidateSignatureApp();
+  return { ok: true };
+}
+
+/** Restaure un document depuis la corbeille. */
+export async function restoreEnvelope(
+  envelopeId: string
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const guard = await guardWrite();
+  if (isGuardError(guard)) return guard;
+
+  const envelope = await prisma.signatureEnvelope.findUnique({
+    where: { id: envelopeId },
+    select: { id: true, createurId: true, titre: true, deletedAt: true },
+  });
+  if (!envelope?.deletedAt) {
+    return { ok: false, error: "Document introuvable en corbeille." };
+  }
+  if (envelope.createurId !== guard.id) {
+    return { ok: false, error: "Seul l'émetteur peut restaurer ce document." };
+  }
+  if (envelope.deletedAt < trashCutoffDate()) {
+    return {
+      ok: false,
+      error: `Ce document a dépassé ${SIGNATURE_TRASH_DAYS} jours en corbeille.`,
+    };
+  }
+
+  await prisma.signatureEnvelope.update({
+    where: { id: envelopeId },
+    data: { deletedAt: null },
+  });
+
+  await logAudit({
+    userId: guard.id,
+    userNom: guard.nom,
+    action: "RESTORE",
+    entity: "SignatureEnvelope",
+    entityId: envelopeId,
+    details: `Document signature restauré · ${envelope.titre}`,
+  });
+
+  revalidateSignatureApp();
+  return { ok: true };
+}
+
+/** Suppression définitive depuis la corbeille. */
+export async function purgeEnvelope(
+  envelopeId: string
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const guard = await guardWrite();
+  if (isGuardError(guard)) return guard;
+
+  const envelope = await prisma.signatureEnvelope.findUnique({
+    where: { id: envelopeId },
+    select: {
+      id: true,
+      createurId: true,
+      titre: true,
+      deletedAt: true,
+      fichierChemin: true,
+    },
+  });
+  if (!envelope?.deletedAt) {
+    return { ok: false, error: "Document introuvable en corbeille." };
+  }
+  if (envelope.createurId !== guard.id) {
+    return { ok: false, error: "Seul l'émetteur peut supprimer définitivement." };
+  }
+
+  try {
+    await deleteArchiveFile(envelope.fichierChemin);
+  } catch {
+    /* ignore */
   }
 
   await prisma.signatureEnvelope.delete({
@@ -912,10 +1087,10 @@ export async function deleteEnvelope(
   await logAudit({
     userId: guard.id,
     userNom: guard.nom,
-    action: "DELETE",
+    action: "PURGE",
     entity: "SignatureEnvelope",
     entityId: envelopeId,
-    details: `Document signature supprimé · ${envelope.titre}`,
+    details: `Document signature supprimé définitivement · ${envelope.titre}`,
   });
 
   revalidateSignatureApp();
