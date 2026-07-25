@@ -1,10 +1,10 @@
+import { randomBytes } from "crypto";
 import { PDFDocument, rgb, StandardFonts } from "pdf-lib";
 import {
   appendFinalAuditReportPage,
   type SignatureAuditReport,
 } from "@/lib/signature-audit-pdf";
 import { pdfSafeText } from "@/lib/pdf-text";
-import { rasterizePdfToImages } from "@/lib/pdf-rasterize";
 
 export type StampAnnotation = {
   type: string;
@@ -27,9 +27,45 @@ function dataUrlToBytes(dataUrl: string): { bytes: Uint8Array; mime: string } | 
 }
 
 /**
+ * Verrouille le PDF (ouverture libre, modification interdite).
+ * RC4 + PDF simplifié : compatible Aperçu macOS.
+ */
+async function lockPdfAgainstModification(
+  bytes: Uint8Array
+): Promise<Uint8Array> {
+  try {
+    const src = await PDFDocument.load(bytes, { ignoreEncryption: true });
+    const out = await PDFDocument.create();
+    const copied = await out.copyPages(src, src.getPageIndices());
+    for (const p of copied) out.addPage(p);
+    out.setProducer("MEGA Signature");
+    out.setCreator("MEGA Signature");
+    const plain = await out.save({ useObjectStreams: false });
+
+    const { encryptPDF } = await import("@pdfsmaller/pdf-encrypt");
+    const ownerPassword = randomBytes(24).toString("base64url");
+    const locked = await encryptPDF(plain, "", {
+      ownerPassword,
+      algorithm: "RC4",
+      allowPrinting: true,
+      allowHighQualityPrint: true,
+      allowCopying: true,
+      allowModifying: false,
+      allowAnnotating: false,
+      allowFillingForms: false,
+      allowAssembly: false,
+      allowExtraction: true,
+    });
+    return locked instanceof Uint8Array ? locked : new Uint8Array(locked);
+  } catch (e) {
+    console.error("[signature-flatten] lock PDF failed", e);
+    return bytes;
+  }
+}
+
+/**
  * Produit un PDF avec les annotations (signatures, texte…) incrustées
- * et, si demandé, une page de rapport d'audit.
- * Verrouillage = aplatissement en images (pas de mot de passe à demander).
+ * et, si demandé, une page de rapport d'audit + verrouillage anti-modification.
  */
 export async function buildSignedPdf(input: {
   fileBytes: Uint8Array;
@@ -38,7 +74,7 @@ export async function buildSignedPdf(input: {
   annotations: StampAnnotation[];
   /** Page d'audit final (document complet / signé). */
   audit?: SignatureAuditReport | null;
-  /** Aplatit le PDF en images (anti-édition, sans dialogue mot de passe). */
+  /** Verrouille contre modification (RC4, ouverture libre). */
   lock?: boolean;
 }): Promise<{ bytes: Uint8Array; fileName: string }> {
   const mime = (input.fileMime || "").toLowerCase();
@@ -205,13 +241,7 @@ export async function buildSignedPdf(input: {
 
   let bytes = await pdf.save({ useObjectStreams: false });
   if (input.lock || input.audit) {
-    try {
-      // Pages en images : lisible sans MDP, texte/contenu non éditables
-      bytes = await rasterizePdfToImages(bytes, { scale: 2 });
-    } catch (e) {
-      console.error("[signature-flatten] rasterize failed", e);
-      // garde le PDF vectoriel signé plutôt que d'échouer
-    }
+    bytes = await lockPdfAgainstModification(bytes);
   }
   return { bytes, fileName: signedFileName(input.fileName) };
 }
