@@ -251,7 +251,7 @@ export async function appendFinalAuditReportPage(
   });
   page.drawText(
     pdfSafeText(
-      "Signatures électroniques incrustées — toute altération du contenu invalide ce certificat."
+      "Document verrouille : modification et annotations desactivees apres certification."
     ),
     {
       x: margin,

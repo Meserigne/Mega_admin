@@ -1,3 +1,4 @@
+import { randomBytes } from "crypto";
 import { PDFDocument, rgb, StandardFonts } from "pdf-lib";
 import {
   appendFinalAuditReportPage,
@@ -26,9 +27,46 @@ function dataUrlToBytes(dataUrl: string): { bytes: Uint8Array; mime: string } | 
 }
 
 /**
+ * Verrouille le PDF (ouverture libre, modification / annotations interdites).
+ * RC4 + PDF simplifié : compatible Aperçu macOS (AES provoquait l'erreur 135).
+ */
+async function lockPdfAgainstModification(
+  bytes: Uint8Array
+): Promise<Uint8Array> {
+  try {
+    // Structure simple avant chiffrement (évite objets invalides)
+    const src = await PDFDocument.load(bytes, { ignoreEncryption: true });
+    const out = await PDFDocument.create();
+    const copied = await out.copyPages(src, src.getPageIndices());
+    for (const p of copied) out.addPage(p);
+    out.setProducer("MEGA Signature");
+    out.setCreator("MEGA Signature");
+    const plain = await out.save({ useObjectStreams: false });
+
+    const { encryptPDF } = await import("@pdfsmaller/pdf-encrypt");
+    const ownerPassword = randomBytes(24).toString("base64url");
+    const locked = await encryptPDF(plain, "", {
+      ownerPassword,
+      algorithm: "RC4",
+      allowPrinting: true,
+      allowHighQualityPrint: true,
+      allowCopying: true,
+      allowModifying: false,
+      allowAnnotating: false,
+      allowFillingForms: false,
+      allowAssembly: false,
+      allowExtraction: true,
+    });
+    return locked instanceof Uint8Array ? locked : new Uint8Array(locked);
+  } catch (e) {
+    console.error("[signature-flatten] lock PDF failed", e);
+    return bytes;
+  }
+}
+
+/**
  * Produit un PDF avec les annotations (signatures, texte…) incrustées
- * et, si demandé, une page de rapport d'audit.
- * Note : pas de chiffrement PDF (incompatible Aperçu macOS / erreur 135).
+ * et, si demandé, une page de rapport d'audit + verrouillage anti-modification.
  */
 export async function buildSignedPdf(input: {
   fileBytes: Uint8Array;
@@ -37,7 +75,7 @@ export async function buildSignedPdf(input: {
   annotations: StampAnnotation[];
   /** Page d'audit final (document complet / signé). */
   audit?: SignatureAuditReport | null;
-  /** Conservé pour compat ; le chiffrement est désactivé (lisibilité). */
+  /** Verrouille contre modification / annotations (RC4, ouverture libre). */
   lock?: boolean;
 }): Promise<{ bytes: Uint8Array; fileName: string }> {
   const mime = (input.fileMime || "").toLowerCase();
@@ -191,7 +229,6 @@ export async function buildSignedPdf(input: {
     await appendFinalAuditReportPage(pdf, input.audit);
   }
 
-  // Métadonnées de certification (sans chiffrement — évite erreur 135 Aperçu)
   if (input.audit || input.lock) {
     pdf.setProducer("MEGA Signature");
     pdf.setCreator("MEGA Signature");
@@ -203,7 +240,10 @@ export async function buildSignedPdf(input: {
     );
   }
 
-  const bytes = await pdf.save({ useObjectStreams: false });
+  let bytes = await pdf.save({ useObjectStreams: false });
+  if (input.lock || input.audit) {
+    bytes = await lockPdfAgainstModification(bytes);
+  }
   return { bytes, fileName: signedFileName(input.fileName) };
 }
 
