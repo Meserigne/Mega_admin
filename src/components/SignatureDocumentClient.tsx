@@ -11,6 +11,7 @@ import {
   signEnvelopeDocument,
   type EnvelopeDetail,
 } from "@/app/actions/signature-docs";
+import { PdfPageViewer } from "@/components/PdfPageViewer";
 import { SignatureCaptureModal } from "@/components/SignatureCaptureModal";
 import { usePermissions } from "@/components/PermissionsProvider";
 import {
@@ -189,20 +190,38 @@ function SignedDocumentPreview({
                 }}
               />
             )}
-            {isPdf && (
-              <iframe
-                title="Aperçu PDF"
-                src={`${src}#toolbar=0&navpanes=0&scrollbar=0&view=Fit&zoom=page-fit`}
-                className="pointer-events-none absolute inset-0 h-full w-full border-0 bg-white"
+            {isPdf && pageBox && (
+              <PdfPageViewer
+                url={src}
+                width={pageBox.w}
+                height={pageBox.h}
+                onPageSize={(size) => {
+                  setNatural((prev) => {
+                    if (
+                      prev &&
+                      Math.abs(prev.w - size.w) < 0.5 &&
+                      Math.abs(prev.h - size.h) < 0.5
+                    ) {
+                      return prev;
+                    }
+                    return size;
+                  });
+                  setOrientation(size.w >= size.h ? "landscape" : "portrait");
+                }}
               />
+            )}
+            {isPdf && !pageBox && (
+              <div className="flex h-full items-center justify-center text-sm text-slate-500">
+                Chargement de l&apos;aperçu…
+              </div>
             )}
             {!isImage && !isPdf && (
               <div className="flex h-full flex-col items-center justify-center p-8 text-center">
                 <FileText className="h-8 w-8 text-slate-400" />
                 <p className="mt-2 font-medium">{detail.fichierNom}</p>
                 <p className="mt-1 text-sm text-slate-500">
-                  Utilisez « Ouvrir le document signé » pour voir les signatures
-                  incrustées.
+                  Utilisez « PDF certifié + audit » pour télécharger le document
+                  final.
                 </p>
               </div>
             )}
