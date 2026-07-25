@@ -3,13 +3,7 @@ import { pathToFileURL } from "url";
 import { createCanvas } from "@napi-rs/canvas";
 import { PDFDocument } from "pdf-lib";
 
-type CanvasAndContext = {
-  canvas: ReturnType<typeof createCanvas>;
-  context: ReturnType<ReturnType<typeof createCanvas>["getContext"]>;
-};
-
 function resolvePdfWorkerSrc(): string {
-  // Worker déjà présent dans /public (utilisé aussi côté navigateur)
   const workerPath = path.join(
     process.cwd(),
     "public",
@@ -30,20 +24,27 @@ export async function rasterizePdfToImages(
   const pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs");
   pdfjs.GlobalWorkerOptions.workerSrc = resolvePdfWorkerSrc();
 
+  // Factory typée en any : les types pdf.js attendent un SvgCanvas navigateur
   const canvasFactory = {
-    create(width: number, height: number): CanvasAndContext {
+    create(width: number, height: number) {
       const canvas = createCanvas(
         Math.max(1, Math.floor(width)),
         Math.max(1, Math.floor(height))
       );
-      const context = canvas.getContext("2d");
-      return { canvas, context };
+      return {
+        canvas,
+        context: canvas.getContext("2d"),
+      };
     },
-    reset(canvasAndContext: CanvasAndContext, width: number, height: number) {
+    reset(
+      canvasAndContext: { canvas: { width: number; height: number } },
+      width: number,
+      height: number
+    ) {
       canvasAndContext.canvas.width = Math.max(1, Math.floor(width));
       canvasAndContext.canvas.height = Math.max(1, Math.floor(height));
     },
-    destroy(canvasAndContext: CanvasAndContext) {
+    destroy(canvasAndContext: { canvas: { width: number; height: number } }) {
       canvasAndContext.canvas.width = 0;
       canvasAndContext.canvas.height = 0;
     },
@@ -54,8 +55,8 @@ export async function rasterizePdfToImages(
     useSystemFonts: true,
     isEvalSupported: false,
     disableFontFace: true,
-    // @ts-expect-error node canvas factory
-    canvasFactory,
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    canvasFactory: canvasFactory as any,
   });
 
   const doc = await loadingTask.promise;
@@ -75,16 +76,19 @@ export async function rasterizePdfToImages(
     ctx.fillRect(0, 0, canvas.width, canvas.height);
 
     await page.render({
-      // @ts-expect-error Node canvas context
-      canvasContext: ctx,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      canvasContext: ctx as any,
       viewport,
-      // @ts-expect-error Node canvas
-      canvas,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      canvas: canvas as any,
     }).promise;
 
     const png = canvas.toBuffer("image/png");
     const embedded = await out.embedPng(png);
-    const pdfPage = out.addPage([embedded.width / scale, embedded.height / scale]);
+    const pdfPage = out.addPage([
+      embedded.width / scale,
+      embedded.height / scale,
+    ]);
     pdfPage.drawImage(embedded, {
       x: 0,
       y: 0,
