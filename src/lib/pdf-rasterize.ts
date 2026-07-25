@@ -53,11 +53,10 @@ export async function rasterizePdfToImages(
   const loadingTask = pdfjs.getDocument({
     data: pdfBytes.slice(0),
     useSystemFonts: true,
-    isEvalSupported: false,
     disableFontFace: true,
+    canvasFactory,
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    canvasFactory: canvasFactory as any,
-  });
+  } as any);
 
   const doc = await loadingTask.promise;
   const out = await PDFDocument.create();
