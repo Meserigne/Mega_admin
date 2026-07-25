@@ -96,11 +96,5 @@ export async function rasterizePdfToImages(
     });
   }
 
-  try {
-    await doc.destroy();
-  } catch {
-    /* ignore */
-  }
-
   return out.save({ useObjectStreams: false });
 }
