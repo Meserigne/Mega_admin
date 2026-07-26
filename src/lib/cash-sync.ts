@@ -15,10 +15,16 @@ export function isCashMode(modePaiement: string | null | undefined): boolean {
   return (modePaiement ?? "").trim() === MODE_CASH;
 }
 
-/** Journal hors Cash : compte dans le solde banque / trésorerie banque. */
+/**
+ * Opérations qui comptent dans le solde banque.
+ * Le Cash historique (sans miroir caisse) reste en banque.
+ * Seul le Cash synchronisé vers la petite caisse est exclu (évite le double comptage).
+ */
 export const whereJournalBanque = {
-  NOT: { modePaiement: MODE_CASH },
-} as const;
+  NOT: {
+    AND: [{ modePaiement: MODE_CASH }, { caisseMiroir: { isNot: null } }],
+  },
+};
 
 type ApprovalSlice = {
   statutApprobation: string;

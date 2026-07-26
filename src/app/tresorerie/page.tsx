@@ -147,10 +147,10 @@ export default async function TresoreriePage() {
       <TresorerieAnomalies anomalies={data.anomalies} />
 
       <Alert type="info">
-        <strong>Banque</strong> = journal hors Cash (chèques, virements, mobile
-        money). <strong>Petite caisse</strong> = espèces. Une écriture Cash du
-        journal (ou saisie en caisse) est synchronisée automatiquement et ne
-        compte qu&apos;une fois dans la trésorerie.
+        <strong>Banque</strong> = journal (chèques, virements, mobile money, et
+        Cash non synchronisé). <strong>Petite caisse</strong> = espèces. Une
+        écriture Cash saisie ou synchronisée avec la caisse ne compte
+        qu&apos;une fois dans la trésorerie.
       </Alert>
 
       <TableauMensuel
