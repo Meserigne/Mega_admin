@@ -101,6 +101,8 @@ export type EnvelopeDetail = {
   }[];
   canCancel: boolean;
   canDelete: boolean;
+  /** Émetteur : peut renvoyer le lien aux destinataires « À signer ». */
+  canResendInvite: boolean;
 };
 
 function emailsMatch(a: string | null | undefined, b: string | null | undefined) {
@@ -552,6 +554,7 @@ export async function getEnvelopeDetail(
     })),
     canCancel: r.createurId === guard.id && r.statut === "EN_COURS",
     canDelete: r.createurId === guard.id,
+    canResendInvite: r.createurId === guard.id && r.statut === "EN_COURS",
   };
 }
 
@@ -964,24 +967,120 @@ export async function signEnvelopeDocument(
     details: `Signature · ${envelope.titre}`,
   });
 
-  const inviteIds = progress.newlyReadyIds;
-  const completed = progress.completed;
-  after(async () => {
+  // Invitation suivante synchrone (after() souvent interrompu sur Vercel)
+  if (progress.newlyReadyIds.length > 0) {
     try {
-      if (inviteIds.length > 0) {
-        await sendInviteEmails(envelopeId, inviteIds);
-      }
-      if (completed) {
-        await sendCompletedEmails(envelopeId);
+      const invited = await sendInviteEmails(
+        envelopeId,
+        progress.newlyReadyIds
+      );
+      if (invited.mail && !invited.mail.ok) {
+        console.error(
+          "[signEnvelopeDocument] invite mail failed",
+          invited.mail.error
+        );
       }
     } catch (e) {
-      console.error("[signEnvelopeDocument] post-sign mail/pdf", e);
+      console.error("[signEnvelopeDocument] invite mail", e);
     }
-  });
+  }
+
+  if (progress.completed) {
+    after(async () => {
+      try {
+        await sendCompletedEmails(envelopeId);
+      } catch (e) {
+        console.error("[signEnvelopeDocument] completed mail/pdf", e);
+      }
+    });
+  }
 
   revalidateSignatureApp();
   revalidatePath(`/signatures/${envelopeId}`);
   return { ok: true };
+}
+
+/** Renvoie le lien de signature aux destinataires « À signer » (émetteur). */
+export async function resendEnvelopeInvite(
+  envelopeId: string,
+  destinataireId?: string
+): Promise<
+  | { ok: true; emailed: string[] }
+  | { ok: false; error: string }
+> {
+  const guard = await guardWrite();
+  if (isGuardError(guard)) return guard;
+
+  let envelope = await prisma.signatureEnvelope.findUnique({
+    where: { id: envelopeId },
+    include: { destinataires: { orderBy: { ordre: "asc" } } },
+  });
+  if (!envelope || envelope.deletedAt) {
+    return { ok: false, error: "Document introuvable." };
+  }
+  if (envelope.createurId !== guard.id) {
+    return { ok: false, error: "Seul l'émetteur peut renvoyer les invitations." };
+  }
+  if (envelope.statut !== "EN_COURS") {
+    return { ok: false, error: "Document déjà clôturé." };
+  }
+
+  let targets = envelope.destinataires.filter((d) => {
+    if (d.statut !== "A_SIGNER") return false;
+    if (destinataireId && d.id !== destinataireId) return false;
+    return d.role === "SIGNATAIRE" || d.role === "INITIATEUR";
+  });
+
+  // Si personne n'est « À signer » (mail précédent raté), réactive le prochain
+  if (targets.length === 0 && !destinataireId) {
+    const progress = await activateNextSigners(envelopeId);
+    if (progress.completed) {
+      return {
+        ok: false,
+        error: "Tous les signataires ont déjà signé — document à clôturer.",
+      };
+    }
+    envelope = await prisma.signatureEnvelope.findUnique({
+      where: { id: envelopeId },
+      include: { destinataires: { orderBy: { ordre: "asc" } } },
+    });
+    if (!envelope) return { ok: false, error: "Document introuvable." };
+    targets = envelope.destinataires.filter((d) =>
+      progress.newlyReadyIds.includes(d.id)
+    );
+  }
+
+  if (targets.length === 0) {
+    return {
+      ok: false,
+      error: destinataireId
+        ? "Ce destinataire n'est pas en attente de signature."
+        : "Aucun destinataire à relancer pour le moment.",
+    };
+  }
+
+  const invited = await sendInviteEmails(
+    envelopeId,
+    targets.map((d) => d.id)
+  );
+  if (invited.mail && !invited.mail.ok) {
+    return {
+      ok: false,
+      error: invited.mail.error || "Échec d'envoi de l'e-mail.",
+    };
+  }
+
+  await logAudit({
+    userId: guard.id,
+    userNom: guard.nom,
+    action: "UPDATE",
+    entity: "SignatureEnvelope",
+    entityId: envelopeId,
+    details: `Relance invitation · ${targets.map((d) => d.email).join(", ")}`,
+  });
+
+  revalidatePath(`/signatures/${envelopeId}`);
+  return { ok: true, emailed: targets.map((d) => d.email) };
 }
 
 export async function refuseEnvelopeDocument(

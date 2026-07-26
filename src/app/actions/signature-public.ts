@@ -75,7 +75,7 @@ async function sendInviteEmails(
         data: { accessToken: token },
       });
     }
-    await sendSignatureInviteEmail({
+    const mail = await sendSignatureInviteEmail({
       to: d.email,
       destinataireNom: d.nom,
       createurNom: envelope.createurNom,
@@ -83,6 +83,14 @@ async function sendInviteEmails(
       message: envelope.message,
       accessToken: token,
     });
+    if (!mail.ok) {
+      console.error(
+        "[sendInviteEmails] failed",
+        d.email,
+        mail.mode,
+        mail.error
+      );
+    }
   }
 }
 
@@ -354,22 +362,27 @@ export async function submitPublicSignature(
   revalidatePath(`/sign/${token}`);
   revalidatePath(`/signatures/${session.envelopeId}`);
 
-  // E-mails + PDF certifié hors chemin critique (évite le « Submit » qui tourne)
   const envelopeId = session.envelopeId;
-  const inviteIds = progress.newlyReadyIds;
-  const completed = progress.completed;
-  after(async () => {
+
+  // Invitation suivante : attendre l’envoi (after() est souvent coupé sur Vercel)
+  if (progress.newlyReadyIds.length > 0) {
     try {
-      if (inviteIds.length > 0) {
-        await sendInviteEmails(envelopeId, inviteIds);
-      }
-      if (completed) {
-        await sendCompletedEmails(envelopeId);
-      }
+      await sendInviteEmails(envelopeId, progress.newlyReadyIds);
     } catch (e) {
-      console.error("[submitPublicSignature] post-sign mail/pdf", e);
+      console.error("[submitPublicSignature] invite mail", e);
     }
-  });
+  }
+
+  // PDF final + mails de clôture : hors chemin critique
+  if (progress.completed) {
+    after(async () => {
+      try {
+        await sendCompletedEmails(envelopeId);
+      } catch (e) {
+        console.error("[submitPublicSignature] completed mail/pdf", e);
+      }
+    });
+  }
 
   return { ok: true };
 }
