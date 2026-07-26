@@ -2,6 +2,10 @@ import { notFound } from "next/navigation";
 import { getPublicSignSession } from "@/app/actions/signature-public";
 import { PublicSignClient } from "@/components/PublicSignClient";
 
+export const dynamic = "force-dynamic";
+/** Temps pour envoyer l’invitation au signataire suivant (SMTP). */
+export const maxDuration = 60;
+
 export default async function PublicSignPage({
   params,
 }: {
