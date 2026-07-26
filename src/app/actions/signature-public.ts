@@ -1,21 +1,20 @@
 "use server";
 
-import { randomBytes } from "crypto";
 import { revalidatePath } from "next/cache";
 import { after } from "next/server";
+import { waitUntil } from "@vercel/functions";
 import { prisma } from "@/lib/prisma";
 import { signatureContactEmail } from "@/lib/mail";
 import {
   appBaseUrl,
   sendSignatureCompletedEmail,
-  sendSignatureInviteEmail,
   signUrlForToken,
 } from "@/lib/signature-mail";
+import {
+  ensurePendingInvites,
+  sendInviteEmailsToDestinataires,
+} from "@/lib/signature-invite";
 import { buildSignedPdfForEnvelope } from "@/lib/signature-pdf";
-
-function newAccessToken() {
-  return randomBytes(32).toString("hex");
-}
 
 export type PublicSignSession = {
   token: string;
@@ -52,47 +51,6 @@ export type PublicSignSession = {
     mine: boolean;
   }[];
 };
-
-async function sendInviteEmails(
-  envelopeId: string,
-  destinataireIds: string[]
-) {
-  if (destinataireIds.length === 0) return;
-  const envelope = await prisma.signatureEnvelope.findUnique({
-    where: { id: envelopeId },
-    include: { destinataires: true },
-  });
-  if (!envelope) return;
-
-  for (const d of envelope.destinataires.filter((x) =>
-    destinataireIds.includes(x.id)
-  )) {
-    let token = d.accessToken;
-    if (!token) {
-      token = newAccessToken();
-      await prisma.signatureDestinataire.update({
-        where: { id: d.id },
-        data: { accessToken: token },
-      });
-    }
-    const mail = await sendSignatureInviteEmail({
-      to: d.email,
-      destinataireNom: d.nom,
-      createurNom: envelope.createurNom,
-      documentTitle: envelope.titre,
-      message: envelope.message,
-      accessToken: token,
-    });
-    if (!mail.ok) {
-      console.error(
-        "[sendInviteEmails] failed",
-        d.email,
-        mail.mode,
-        mail.error
-      );
-    }
-  }
-}
 
 async function sendCompletedEmails(envelopeId: string) {
   const envelope = await prisma.signatureEnvelope.findUnique({
@@ -180,7 +138,7 @@ async function activateNextSigners(
     if (next) {
       await prisma.signatureDestinataire.update({
         where: { id: next.id },
-        data: { statut: "A_SIGNER" },
+        data: { statut: "A_SIGNER", inviteSentAt: null },
       });
       newlyReadyIds.push(next.id);
     }
@@ -193,7 +151,7 @@ async function activateNextSigners(
   if (unsignedSigners.length > 0) {
     await prisma.signatureDestinataire.updateMany({
       where: { id: { in: unsignedSigners.map((d) => d.id) } },
-      data: { statut: "A_SIGNER" },
+      data: { statut: "A_SIGNER", inviteSentAt: null },
     });
     newlyReadyIds.push(...unsignedSigners.map((d) => d.id));
   }
@@ -364,16 +322,33 @@ export async function submitPublicSignature(
 
   const envelopeId = session.envelopeId;
 
-  // Invitation suivante : attendre l’envoi (after() est souvent coupé sur Vercel)
+  // Invitation suivante : await + waitUntil (filet de sécurité Vercel)
   if (progress.newlyReadyIds.length > 0) {
+    const ids = progress.newlyReadyIds;
     try {
-      await sendInviteEmails(envelopeId, progress.newlyReadyIds);
+      const invited = await sendInviteEmailsToDestinataires(envelopeId, ids);
+      if (!invited.allOk) {
+        console.error(
+          "[submitPublicSignature] invite incomplete",
+          invited.results.map((r) => [r.email, r.mail.error])
+        );
+        // Relance en arrière-plan si SMTP a échoué / timeout partiel
+        waitUntil(
+          ensurePendingInvites(envelopeId).catch((e) =>
+            console.error("[submitPublicSignature] ensurePending", e)
+          )
+        );
+      }
     } catch (e) {
       console.error("[submitPublicSignature] invite mail", e);
+      waitUntil(
+        ensurePendingInvites(envelopeId).catch((err) =>
+          console.error("[submitPublicSignature] ensurePending", err)
+        )
+      );
     }
   }
 
-  // PDF final + mails de clôture : hors chemin critique
   if (progress.completed) {
     after(async () => {
       try {
@@ -385,6 +360,35 @@ export async function submitPublicSignature(
   }
 
   return { ok: true };
+}
+
+/** Appelé depuis la page merci pour rattraper un mail non parti. */
+export async function ensureInviteAfterPublicSign(
+  token: string
+): Promise<{ ok: true; sent: number } | { ok: false; error: string }> {
+  const t = token.trim();
+  if (!t || t.length < 16) return { ok: false, error: "Lien invalide." };
+
+  const dest = await prisma.signatureDestinataire.findUnique({
+    where: { accessToken: t },
+    select: {
+      statut: true,
+      envelopeId: true,
+      envelope: { select: { statut: true, deletedAt: true } },
+    },
+  });
+  if (!dest || dest.envelope.deletedAt) {
+    return { ok: false, error: "Document introuvable." };
+  }
+  if (dest.statut !== "SIGNE") {
+    return { ok: true, sent: 0 };
+  }
+  if (dest.envelope.statut !== "EN_COURS") {
+    return { ok: true, sent: 0 };
+  }
+
+  const invited = await ensurePendingInvites(dest.envelopeId);
+  return { ok: true, sent: invited.results.filter((r) => r.mail.ok).length };
 }
 
 export async function refusePublicSignature(

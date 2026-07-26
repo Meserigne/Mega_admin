@@ -114,6 +114,8 @@ model SignatureDestinataire {
   signatureImage String?
   signeAt        DateTime?
   motifRefus     String?
+  /** Dernier envoi réussi du lien (null = pas encore envoyé pour ce tour). */
+  inviteSentAt   DateTime?
   createdAt      DateTime           @default(now())
   updatedAt      DateTime           @updatedAt
   champs         SignatureChamp[]

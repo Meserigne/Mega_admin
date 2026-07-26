@@ -2,7 +2,11 @@ import Link from "next/link";
 import { Check } from "lucide-react";
 import { notFound } from "next/navigation";
 import { getPublicSignSession } from "@/app/actions/signature-public";
+import { EnsureNextInvite } from "@/components/EnsureNextInvite";
 import { MegaLogo } from "@/components/MegaLogo";
+
+export const dynamic = "force-dynamic";
+export const maxDuration = 60;
 
 export default async function PublicSignMerciPage({
   params,
@@ -15,6 +19,7 @@ export default async function PublicSignMerciPage({
 
   return (
     <div className="flex min-h-dvh w-full flex-col bg-[#f3f4f6]">
+      {session.alreadySigned && <EnsureNextInvite token={token} />}
       <header className="flex h-14 w-full items-center gap-3 border-b border-slate-200 bg-white px-4">
         <MegaLogo width={108} />
         <span className="mx-auto truncate text-sm font-medium text-slate-700">

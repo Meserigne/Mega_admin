@@ -152,9 +152,12 @@ export function PublicSignClient({ session }: { session: PublicSignSession }) {
         return;
       }
       router.push(`/sign/${session.token}/merci`);
-    } catch {
-      // Timeout éventuel côté serveur : la signature peut déjà être enregistrée
-      router.push(`/sign/${session.token}/merci`);
+    } catch (e) {
+      // Ne pas masquer une vraie erreur : vérifier si la signature est déjà enregistrée
+      console.error("[PublicSignClient] submit", e);
+      setError(
+        "La signature a peut‑être été enregistrée, mais la confirmation a échoué. Rechargez la page ou contactez l’émetteur."
+      );
       router.refresh();
     } finally {
       setSubmitting(false);

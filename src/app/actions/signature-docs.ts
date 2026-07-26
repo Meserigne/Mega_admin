@@ -19,9 +19,12 @@ import {
   appBaseUrl,
   isMailConfigured,
   sendSignatureCompletedEmail,
-  sendSignatureInviteEmail,
   signUrlForToken,
 } from "@/lib/signature-mail";
+import {
+  sendInviteEmailsToDestinataires,
+  type InviteLink,
+} from "@/lib/signature-invite";
 import { buildSignedPdfForEnvelope } from "@/lib/signature-pdf";
 import { verifyMailTransport, type SendMailResult } from "@/lib/mail";
 
@@ -127,37 +130,15 @@ async function sendInviteEmails(
   envelopeId: string,
   destinataireIds: string[]
 ): Promise<{
-  links: { email: string; nom: string; url: string }[];
+  links: InviteLink[];
   mail: SendMailResult | null;
 }> {
-  if (destinataireIds.length === 0) return { links: [], mail: null };
-
-  const envelope = await prisma.signatureEnvelope.findUnique({
-    where: { id: envelopeId },
-    include: { destinataires: true },
-  });
-  if (!envelope) return { links: [], mail: null };
-
-  const links: { email: string; nom: string; url: string }[] = [];
-  const targets = envelope.destinataires.filter((d) =>
-    destinataireIds.includes(d.id)
+  const invited = await sendInviteEmailsToDestinataires(
+    envelopeId,
+    destinataireIds
   );
-
-  let lastMail: SendMailResult | null = null;
-  for (const d of targets) {
-    const token = await ensureDestAccessToken(d.id, d.accessToken);
-    const url = signUrlForToken(token);
-    links.push({ email: d.email, nom: d.nom, url });
-    lastMail = await sendSignatureInviteEmail({
-      to: d.email,
-      destinataireNom: d.nom,
-      createurNom: envelope.createurNom,
-      documentTitle: envelope.titre,
-      message: envelope.message,
-      accessToken: token,
-    });
-  }
-  return { links, mail: lastMail };
+  const last = invited.results[invited.results.length - 1]?.mail ?? null;
+  return { links: invited.links, mail: last };
 }
 
 async function sendCompletedEmails(envelopeId: string) {
@@ -249,7 +230,7 @@ async function activateNextSigners(
     if (next) {
       await prisma.signatureDestinataire.update({
         where: { id: next.id },
-        data: { statut: "A_SIGNER" },
+        data: { statut: "A_SIGNER", inviteSentAt: null },
       });
       newlyReadyIds.push(next.id);
     }
@@ -262,7 +243,7 @@ async function activateNextSigners(
   if (unsignedSigners.length > 0) {
     await prisma.signatureDestinataire.updateMany({
       where: { id: { in: unsignedSigners.map((d) => d.id) } },
-      data: { statut: "A_SIGNER" },
+      data: { statut: "A_SIGNER", inviteSentAt: null },
     });
     newlyReadyIds.push(...unsignedSigners.map((d) => d.id));
   }
@@ -1005,8 +986,8 @@ export async function resendEnvelopeInvite(
   envelopeId: string,
   destinataireId?: string
 ): Promise<
-  | { ok: true; emailed: string[] }
-  | { ok: false; error: string }
+  | { ok: true; emailed: string[]; links: InviteLink[] }
+  | { ok: false; error: string; links?: InviteLink[] }
 > {
   const guard = await guardWrite();
   if (isGuardError(guard)) return guard;
@@ -1064,7 +1045,7 @@ export async function resendEnvelopeInvite(
       });
       await prisma.signatureDestinataire.update({
         where: { id: dest.id },
-        data: { statut: "A_SIGNER" },
+        data: { statut: "A_SIGNER", inviteSentAt: null },
       });
       targetIds = [dest.id];
     }
@@ -1095,26 +1076,37 @@ export async function resendEnvelopeInvite(
     };
   }
 
-  const invited = await sendInviteEmails(envelopeId, targetIds);
-  if (!invited.mail?.ok) {
-    return {
-      ok: false,
-      error: invited.mail?.error || "Échec d'envoi de l'e-mail.",
-    };
-  }
+  // Force un nouvel essai même si un envoi précédent a été marqué
+  await prisma.signatureDestinataire.updateMany({
+    where: { id: { in: targetIds } },
+    data: { inviteSentAt: null },
+  });
 
+  const invited = await sendInviteEmails(envelopeId, targetIds);
   const emailed = invited.links.map((l) => l.email);
+
   await logAudit({
     userId: guard.id,
     userNom: guard.nom,
     action: "UPDATE",
     entity: "SignatureEnvelope",
     entityId: envelopeId,
-    details: `Relance invitation · ${emailed.join(", ")}`,
+    details: `Relance invitation · ${emailed.join(", ")} · mail=${invited.mail?.ok ? "ok" : invited.mail?.error || "ko"}`,
   });
 
   revalidatePath(`/signatures/${envelopeId}`);
-  return { ok: true, emailed };
+
+  if (!invited.mail?.ok) {
+    return {
+      ok: false,
+      error:
+        invited.mail?.error ||
+        "Échec d'envoi de l'e-mail — copiez le lien ci-dessous.",
+      links: invited.links,
+    };
+  }
+
+  return { ok: true, emailed, links: invited.links };
 }
 
 export async function refuseEnvelopeDocument(

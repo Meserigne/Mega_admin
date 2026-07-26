@@ -276,6 +276,9 @@ export function SignatureDocumentClient({
   const [success, setSuccess] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [resendingId, setResendingId] = useState<string | null>(null);
+  const [inviteLinks, setInviteLinks] = useState<
+    { email: string; nom: string; url: string }[]
+  >([]);
   const [signOpen, setSignOpen] = useState(false);
   const [motif, setMotif] = useState("");
 
@@ -294,12 +297,14 @@ export function SignatureDocumentClient({
     router.push(shareHref);
   }
 
-  async function handleResendInvite(destinataireId: string) {
+  async function handleResendInvite(destinataireId?: string) {
     setError(null);
     setSuccess(null);
-    setResendingId(destinataireId);
+    setInviteLinks([]);
+    setResendingId(destinataireId ?? "all");
     try {
       const r = await resendEnvelopeInvite(detail.id, destinataireId);
+      if (r.links?.length) setInviteLinks(r.links);
       if (!r.ok) throw new Error(r.error);
       setSuccess(`Lien renvoyé à ${r.emailed.join(", ")}.`);
       router.refresh();
@@ -528,23 +533,7 @@ export function SignatureDocumentClient({
                 variant="primary"
                 className="!px-3 !py-1.5 text-xs"
                 disabled={Boolean(resendingId) || loading}
-                onClick={async () => {
-                  setError(null);
-                  setSuccess(null);
-                  setResendingId("all");
-                  try {
-                    const r = await resendEnvelopeInvite(detail.id);
-                    if (!r.ok) throw new Error(r.error);
-                    setSuccess(`Lien renvoyé à ${r.emailed.join(", ")}.`);
-                    router.refresh();
-                  } catch (e) {
-                    setError(
-                      e instanceof Error ? e.message : "Échec du renvoi."
-                    );
-                  } finally {
-                    setResendingId(null);
-                  }
-                }}
+                onClick={() => handleResendInvite()}
               >
                 {resendingId === "all"
                   ? "Envoi…"
@@ -555,8 +544,42 @@ export function SignatureDocumentClient({
           {detail.canResendInvite && (
             <p className="mt-2 text-[11px] text-slate-500">
               Si un signataire n’a pas reçu le mail, cliquez sur
-              « Renvoyer l’invitation » ou sur le bouton à côté de son nom.
+              « Renvoyer l’invitation » — le lien à copier s’affichera aussi.
             </p>
+          )}
+          {inviteLinks.length > 0 && (
+            <div className="mt-3 space-y-2 rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs">
+              <p className="font-medium text-amber-900">
+                Liens de signature (à copier / envoyer manuellement) :
+              </p>
+              {inviteLinks.map((l) => (
+                <div key={l.url} className="space-y-1">
+                  <p className="font-medium text-slate-700">
+                    {l.nom} · {l.email}
+                  </p>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <code className="max-w-full break-all rounded bg-white px-2 py-1 text-[11px] text-slate-800">
+                      {l.url}
+                    </code>
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      className="!px-2 !py-1 text-[11px]"
+                      onClick={async () => {
+                        try {
+                          await navigator.clipboard.writeText(l.url);
+                          setSuccess(`Lien copié pour ${l.email}.`);
+                        } catch {
+                          setError("Impossible de copier — sélectionnez le lien.");
+                        }
+                      }}
+                    >
+                      Copier
+                    </Button>
+                  </div>
+                </div>
+              ))}
+            </div>
           )}
           <ol className="mt-3 space-y-3">
             {detail.destinataires.map((d) => {
@@ -600,7 +623,7 @@ export function SignatureDocumentClient({
                       variant="secondary"
                       className="!px-2 !py-1 text-xs"
                       disabled={Boolean(resendingId) || loading}
-                      onClick={() => handleResendInvite(d.id)}
+                      onClick={() => void handleResendInvite(d.id)}
                     >
                       {resendingId === d.id
                         ? "Envoi…"
