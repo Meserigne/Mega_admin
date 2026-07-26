@@ -12,6 +12,7 @@ import {
   parseDetailsJson,
   type LigneDoc,
 } from "@/lib/facturation";
+import { ensureCaisseMirrorFromJournal, isCashMode } from "@/lib/cash-sync";
 import { ensureNumeroFactureUnique, nextNumeroPieceBanque } from "@/lib/numero-piece";
 import { prisma } from "@/lib/prisma";
 import { syncSignatureForFacture } from "@/lib/signatures";
@@ -20,6 +21,7 @@ const PATHS = [
   "/facturation",
   "/clients",
   "/journal",
+  "/caisse",
   "/tresorerie",
   "/impots",
   "/approbations",
@@ -686,6 +688,10 @@ export async function enregistrerPaiementFacture(
           : `Paiement soldé (tranche ${trancheN}) · Facture ${facture.numero}`,
     },
   });
+
+  if (isCashMode(modePaiement)) {
+    await ensureCaisseMirrorFromJournal(op.id);
+  }
 
   await prisma.facture.update({
     where: { id: factureId },

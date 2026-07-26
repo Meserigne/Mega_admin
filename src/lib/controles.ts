@@ -72,11 +72,15 @@ export async function runControles(): Promise<Controle[]> {
     prisma.echeanceImpot.findMany(),
   ]);
 
+  // Miroirs Cash déjà couverts par le journal : éviter les faux doublons
+  const caisseSansMiroir = caisse.filter((o) => !o.operationId);
+  const journalSansCash = journal.filter((o) => o.modePaiement !== "Cash");
+
   const controles: Controle[] = [];
 
   const opsSansDate = [
     ...journal.filter((o) => !o.date).map(journalSource),
-    ...caisse.filter((o) => !o.date).map(caisseSource),
+    ...caisseSansMiroir.filter((o) => !o.date).map(caisseSource),
   ];
   const sansDate = opsSansDate.length;
   const s1 = limitSources(opsSansDate, "/journal", "sans-date");
@@ -103,7 +107,7 @@ export async function runControles(): Promise<Controle[]> {
 
   const opsSansPiece = [
     ...journal.filter((o) => !o.numeroPiece?.trim()).map(journalSource),
-    ...caisse.filter((o) => !o.numeroPiece?.trim()).map(caisseSource),
+    ...caisseSansMiroir.filter((o) => !o.numeroPiece?.trim()).map(caisseSource),
   ];
   const sansPiece = opsSansPiece.length;
   const s3 = limitSources(opsSansPiece, "/journal", "sans-piece");
@@ -125,17 +129,20 @@ export async function runControles(): Promise<Controle[]> {
       !o.codeBudgetaireId &&
       !isMouvementInterne(o.categorie.nom, o.categorie.codeCompte)
   );
-  const caisseSortiesSansCode = caisse.filter(
+  const caisseSortiesSansCode = caisseSansMiroir.filter(
     (o) =>
       (o.sortie ?? 0) > 0 &&
       !o.codeBudgetaireId &&
       !isMouvementInterne(o.categorie.nom, o.categorie.codeCompte)
   );
+  const journalSortiesSansCodeBanq = journalSortiesSansCode.filter(
+    (o) => o.modePaiement !== "Cash"
+  );
   const sortiesSansCode =
-    journalSortiesSansCode.length + caisseSortiesSansCode.length;
+    journalSortiesSansCodeBanq.length + caisseSortiesSansCode.length;
   const s4 = limitSources(
     [
-      ...journalSortiesSansCode.map(journalSource),
+      ...journalSortiesSansCodeBanq.map(journalSource),
       ...caisseSortiesSansCode.map(caisseSource),
     ],
     "/journal",
@@ -156,7 +163,7 @@ export async function runControles(): Promise<Controle[]> {
   const journalDouble = journal.filter(
     (o) => (o.entree ?? 0) > 0 && (o.sortie ?? 0) > 0
   );
-  const caisseDouble = caisse.filter(
+  const caisseDouble = caisseSansMiroir.filter(
     (o) => (o.entree ?? 0) > 0 && (o.sortie ?? 0) > 0
   );
   const doubleMontant = journalDouble.length + caisseDouble.length;
@@ -179,7 +186,7 @@ export async function runControles(): Promise<Controle[]> {
 
   const seen = new Set<string>();
   const doublonSources: ControleSource[] = [];
-  for (const op of [...journal, ...caisse]) {
+  for (const op of [...journalSansCash, ...caisseSansMiroir]) {
     const montant = op.entree ?? op.sortie ?? 0;
     const key = `${op.date?.toISOString() ?? "null"}|${op.libelle}|${montant}`;
     const src =

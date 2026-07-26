@@ -192,12 +192,15 @@ model Operation {
   createdAt        DateTime        @default(now())
   updatedAt        DateTime        @updatedAt
   piecesComptables PieceComptable[]
+  /** Miroir petite caisse quand modePaiement = Cash */
+  caisseMiroir     OperationCaisse?
 
   @@index([date])
   @@index([categorieId])
   @@index([statutApprobation])
   @@index([factureId])
   @@index([numeroPiece])
+  @@index([modePaiement])
 }
 
 model OperationCaisse {
@@ -209,6 +212,9 @@ model OperationCaisse {
   categorie        Categorie       @relation(fields: [categorieId], references: [id])
   codeBudgetaireId String?
   codeBudgetaire   CodeBudgetaire? @relation(fields: [codeBudgetaireId], references: [id])
+  /** Lien vers l'écriture journal Cash (synchro bi-directionnelle) */
+  operationId      String?         @unique
+  operation        Operation?      @relation(fields: [operationId], references: [id], onDelete: Cascade)
   entree           Int?
   sortie           Int?
   observations     String?

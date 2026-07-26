@@ -1,5 +1,6 @@
 import { MOIS_LABELS } from "@/lib/constants";
 import { whereOperationApprouvee } from "@/lib/approbation";
+import { MODE_CASH, whereJournalBanque } from "@/lib/cash-sync";
 import { prisma } from "@/lib/prisma";
 
 export type Mouvement = {
@@ -81,7 +82,12 @@ export async function getSoldes() {
   if (!params) return null;
 
   const date = plageExercice(params.annee);
-  const whereExercice = {
+  const whereExerciceBanque = {
+    ...whereOperationApprouvee,
+    ...whereJournalBanque,
+    date,
+  };
+  const whereExerciceCaisse = {
     ...whereOperationApprouvee,
     date,
   };
@@ -89,17 +95,19 @@ export async function getSoldes() {
   const [journalAgg, caisseAgg, pendingJournal, pendingCaisse] =
     await Promise.all([
       prisma.operation.aggregate({
-        where: whereExercice,
+        where: whereExerciceBanque,
         _sum: { entree: true, sortie: true },
       }),
       prisma.operationCaisse.aggregate({
-        where: whereExercice,
+        where: whereExerciceCaisse,
         _sum: { entree: true, sortie: true },
       }),
+      // Cash = côté caisse ; on évite le double comptage des miroirs
       prisma.operation.aggregate({
         where: {
           statutApprobation: "EN_ATTENTE_CEO",
           date,
+          ...whereJournalBanque,
         },
         _sum: { entree: true, sortie: true },
         _count: true,
@@ -155,18 +163,23 @@ export async function getTresorerieMensuelle() {
   if (!params) return null;
 
   const date = plageExercice(params.annee);
-  const whereExercice = {
+  const whereExerciceBanque = {
+    ...whereOperationApprouvee,
+    ...whereJournalBanque,
+    date,
+  };
+  const whereExerciceCaisse = {
     ...whereOperationApprouvee,
     date,
   };
 
   const [journal, caisse, soldes] = await Promise.all([
     prisma.operation.findMany({
-      where: whereExercice,
+      where: whereExerciceBanque,
       select: { date: true, entree: true, sortie: true },
     }),
     prisma.operationCaisse.findMany({
-      where: whereExercice,
+      where: whereExerciceCaisse,
       select: { date: true, entree: true, sortie: true },
     }),
     getSoldes(),
@@ -245,7 +258,7 @@ export async function getAnomaliesTresorerie(
 
   const [journal, caisse] = await Promise.all([
     prisma.operation.findMany({
-      where: whereExercice,
+      where: { ...whereExercice, ...whereJournalBanque },
       select: {
         id: true,
         date: true,
@@ -253,6 +266,7 @@ export async function getAnomaliesTresorerie(
         libelle: true,
         entree: true,
         sortie: true,
+        modePaiement: true,
       },
     }),
     prisma.operationCaisse.findMany({
@@ -264,6 +278,7 @@ export async function getAnomaliesTresorerie(
         libelle: true,
         entree: true,
         sortie: true,
+        operationId: true,
       },
     }),
   ]);
@@ -272,12 +287,16 @@ export async function getAnomaliesTresorerie(
   const seenCaisse = new Set<string>();
 
   for (const c of caisse) {
+    // Synchro Cash volontaire : pas une anomalie
+    if (c.operationId) continue;
+
     const montant = c.entree ?? c.sortie ?? 0;
     const sens = (c.entree ?? 0) > 0 ? "entree" : "sortie";
     const lib = (c.libelle || "").trim().toLowerCase();
     const d = c.date?.toISOString().slice(0, 10) ?? null;
 
     const match = journal.find((j) => {
+      if (j.modePaiement === MODE_CASH) return false;
       const jm = j.entree ?? j.sortie ?? 0;
       const js = (j.entree ?? 0) > 0 ? "entree" : "sortie";
       const jd = j.date?.toISOString().slice(0, 10) ?? null;

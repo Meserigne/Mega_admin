@@ -9,6 +9,10 @@ import {
 } from "@/lib/approbation";
 import { guardWrite, isGuardError } from "@/lib/auth-guard";
 import { logAudit } from "@/lib/audit";
+import {
+  deleteCaisseAndJournalMirror,
+  ensureJournalMirrorFromCaisse,
+} from "@/lib/cash-sync";
 import { nextNumeroPieceCaisse } from "@/lib/numero-piece";
 import { prisma } from "@/lib/prisma";
 import { computeSoldeCaisseApres } from "@/lib/tresorerie";
@@ -84,6 +88,8 @@ export async function createOperationCaisse(
     data: { ...toDbFields(enriched, numeroPiece), ...approval },
   });
 
+  await ensureJournalMirrorFromCaisse(created.id);
+
   await logAudit({
     userId: guard.id,
     userNom: guard.nom,
@@ -103,6 +109,7 @@ export async function createOperationCaisse(
   }
 
   revalidatePath("/caisse");
+  revalidatePath("/journal");
   revalidatePath("/");
   revalidatePath("/finance");
   revalidatePath("/tresorerie");
@@ -179,6 +186,8 @@ export async function updateOperationCaisse(
     },
   });
 
+  await ensureJournalMirrorFromCaisse(id);
+
   await syncSignatureForCaisseOperation(id, {
     id: guard.id,
     nom: guard.nom,
@@ -194,6 +203,7 @@ export async function updateOperationCaisse(
   });
 
   revalidatePath("/caisse");
+  revalidatePath("/journal");
   revalidatePath("/");
   revalidatePath("/finance");
   revalidatePath("/tresorerie");
@@ -216,7 +226,7 @@ export async function deleteOperationCaisse(
   const existing = await prisma.operationCaisse.findUnique({ where: { id } });
   if (!existing) return { ok: false, error: "Opération introuvable." };
 
-  await prisma.operationCaisse.delete({ where: { id } });
+  await deleteCaisseAndJournalMirror(id);
 
   await logAudit({
     userId: guard.id,
@@ -228,6 +238,7 @@ export async function deleteOperationCaisse(
   });
 
   revalidatePath("/caisse");
+  revalidatePath("/journal");
   revalidatePath("/");
   revalidatePath("/finance");
   revalidatePath("/tresorerie");

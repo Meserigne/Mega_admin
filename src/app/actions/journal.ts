@@ -15,6 +15,10 @@ import { nextNumeroPieceBanque } from "@/lib/numero-piece";
 import { syncTvaDeclarationMois } from "@/lib/impots";
 import { prisma } from "@/lib/prisma";
 import { syncSignatureForJournalOperation } from "@/lib/signatures";
+import {
+  ensureCaisseMirrorFromJournal,
+  isCashMode,
+} from "@/lib/cash-sync";
 import { ensureApprovisionnementCaisse } from "@/lib/transfert-caisse";
 import { OperationInput, montantOperationInchange, validateOperation } from "@/lib/validation";
 
@@ -101,6 +105,8 @@ export async function createOperation(input: OperationInput): Promise<OpResult> 
       codeBudgetaireId: input.codeBudgetaireId || null,
       libelleJournal: enriched.libelle,
     });
+  } else if (isCashMode(enriched.modePaiement)) {
+    await ensureCaisseMirrorFromJournal(created.id);
   }
 
   if ((input.tauxTVA ?? 0) > 0) {
@@ -182,6 +188,8 @@ export async function updateOperation(
     },
   });
 
+  await ensureCaisseMirrorFromJournal(id);
+
   await syncSignatureForJournalOperation(id, {
     id: guard.id,
     nom: guard.nom,
@@ -204,6 +212,7 @@ export async function updateOperation(
   }
 
   revalidatePath("/journal");
+  revalidatePath("/caisse");
   revalidatePath("/impots");
   revalidatePath("/");
   revalidatePath("/finance");
@@ -246,6 +255,7 @@ export async function deleteOperation(
   }
 
   revalidatePath("/journal");
+  revalidatePath("/caisse");
   revalidatePath("/impots");
   revalidatePath("/");
   revalidatePath("/finance");

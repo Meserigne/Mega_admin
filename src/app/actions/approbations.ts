@@ -13,6 +13,11 @@ import {
   validateSignatureImage,
 } from "@/lib/signatures";
 import {
+  ensureCaisseMirrorFromJournal,
+  ensureJournalMirrorFromCaisse,
+  isCashMode,
+} from "@/lib/cash-sync";
+import {
   ensureApprovisionnementCaisse,
   isTransfertVersCaisse,
 } from "@/lib/transfert-caisse";
@@ -54,7 +59,8 @@ export async function getPendingApprovals(): Promise<ApprobationRow[]> {
       orderBy: [{ demandeAt: "asc" }],
     }),
     prisma.operationCaisse.findMany({
-      where: { statutApprobation: "EN_ATTENTE_CEO" },
+      // Les miroirs Cash sont déjà listés côté journal
+      where: { statutApprobation: "EN_ATTENTE_CEO", operationId: null },
       include: { categorie: true },
       orderBy: [{ demandeAt: "asc" }],
     }),
@@ -120,7 +126,7 @@ export async function countPendingApprovals(): Promise<number> {
   const [j, c, f] = await Promise.all([
     prisma.operation.count({ where: { statutApprobation: "EN_ATTENTE_CEO" } }),
     prisma.operationCaisse.count({
-      where: { statutApprobation: "EN_ATTENTE_CEO" },
+      where: { statutApprobation: "EN_ATTENTE_CEO", operationId: null },
     }),
     prisma.facture.count({ where: { statutApprobation: "EN_ATTENTE_CEO" } }),
   ]);
@@ -163,11 +169,20 @@ export async function approveOperation(
   };
 
   if (source === "journal") {
-    const op = await prisma.operation.findUnique({ where: { id } });
+    const op = await prisma.operation.findUnique({
+      where: { id },
+      include: { caisseMiroir: true },
+    });
     if (!op || op.statutApprobation !== "EN_ATTENTE_CEO") {
       return { ok: false, error: "Demande introuvable ou déjà traitée." };
     }
     await prisma.operation.update({ where: { id }, data });
+    if (op.caisseMiroir) {
+      await prisma.operationCaisse.update({
+        where: { id: op.caisseMiroir.id },
+        data,
+      });
+    }
 
     // Transfert banque → caisse : créer l'entrée caisse à l'approbation
     if (
@@ -180,6 +195,8 @@ export async function approveOperation(
         codeBudgetaireId: op.codeBudgetaireId,
         libelleJournal: op.libelle,
       });
+    } else if (isCashMode(op.modePaiement)) {
+      await ensureCaisseMirrorFromJournal(id);
     }
   } else if (source === "caisse") {
     const op = await prisma.operationCaisse.findUnique({ where: { id } });
@@ -187,6 +204,11 @@ export async function approveOperation(
       return { ok: false, error: "Demande introuvable ou déjà traitée." };
     }
     await prisma.operationCaisse.update({ where: { id }, data });
+    if (op.operationId) {
+      await prisma.operation.update({ where: { id: op.operationId }, data });
+    } else {
+      await ensureJournalMirrorFromCaisse(id);
+    }
   } else {
     const f = await prisma.facture.findUnique({ where: { id } });
     if (!f || f.statutApprobation !== "EN_ATTENTE_CEO") {
@@ -248,17 +270,29 @@ export async function rejectOperation(
   };
 
   if (source === "journal") {
-    const op = await prisma.operation.findUnique({ where: { id } });
+    const op = await prisma.operation.findUnique({
+      where: { id },
+      include: { caisseMiroir: true },
+    });
     if (!op || op.statutApprobation !== "EN_ATTENTE_CEO") {
       return { ok: false, error: "Demande introuvable ou déjà traitée." };
     }
     await prisma.operation.update({ where: { id }, data });
+    if (op.caisseMiroir) {
+      await prisma.operationCaisse.update({
+        where: { id: op.caisseMiroir.id },
+        data,
+      });
+    }
   } else if (source === "caisse") {
     const op = await prisma.operationCaisse.findUnique({ where: { id } });
     if (!op || op.statutApprobation !== "EN_ATTENTE_CEO") {
       return { ok: false, error: "Demande introuvable ou déjà traitée." };
     }
     await prisma.operationCaisse.update({ where: { id }, data });
+    if (op.operationId) {
+      await prisma.operation.update({ where: { id: op.operationId }, data });
+    }
   } else {
     const f = await prisma.facture.findUnique({ where: { id } });
     if (!f || f.statutApprobation !== "EN_ATTENTE_CEO") {
