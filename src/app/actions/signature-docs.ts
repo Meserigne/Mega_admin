@@ -276,7 +276,14 @@ async function purgeExpiredTrash() {
     where: {
       deletedAt: { not: null, lt: trashCutoffDate() },
     },
-    select: { id: true, fichierChemin: true, titre: true, createurId: true, createurNom: true },
+    select: {
+      id: true,
+      fichierChemin: true,
+      fichierSigneChemin: true,
+      titre: true,
+      createurId: true,
+      createurNom: true,
+    },
     take: 40,
   });
   for (const e of expired) {
@@ -284,6 +291,13 @@ async function purgeExpiredTrash() {
       await deleteArchiveFile(e.fichierChemin);
     } catch {
       /* ignore missing blob */
+    }
+    if (e.fichierSigneChemin) {
+      try {
+        await deleteArchiveFile(e.fichierSigneChemin);
+      } catch {
+        /* ignore */
+      }
     }
     await prisma.signatureEnvelope.delete({ where: { id: e.id } }).catch(() => null);
     await logAudit({
@@ -359,8 +373,25 @@ export async function listMyEnvelopes(): Promise<EnvelopeListItem[]> {
         { destinataires: { some: { userId: guard.id } } },
       ],
     },
-    include: {
-      destinataires: true,
+    select: {
+      id: true,
+      titre: true,
+      statut: true,
+      createurNom: true,
+      createurId: true,
+      fichierNom: true,
+      createdAt: true,
+      envoyeAt: true,
+      completeAt: true,
+      deletedAt: true,
+      destinataires: {
+        select: {
+          role: true,
+          statut: true,
+          userId: true,
+          email: true,
+        },
+      },
     },
     orderBy: { createdAt: "desc" },
     take: 80,
@@ -382,7 +413,26 @@ export async function listTrashedEnvelopes(): Promise<EnvelopeListItem[]> {
       createurId: guard.id,
       deletedAt: { not: null, gte: trashCutoffDate() },
     },
-    include: { destinataires: true },
+    select: {
+      id: true,
+      titre: true,
+      statut: true,
+      createurNom: true,
+      createurId: true,
+      fichierNom: true,
+      createdAt: true,
+      envoyeAt: true,
+      completeAt: true,
+      deletedAt: true,
+      destinataires: {
+        select: {
+          role: true,
+          statut: true,
+          userId: true,
+          email: true,
+        },
+      },
+    },
     orderBy: { deletedAt: "desc" },
     take: 80,
   });
@@ -399,9 +449,48 @@ export async function getEnvelopeDetail(
   const email = guard.email?.toLowerCase() ?? "";
   const r = await prisma.signatureEnvelope.findUnique({
     where: { id },
-    include: {
-      destinataires: { orderBy: { ordre: "asc" } },
-      champs: { orderBy: { createdAt: "asc" } },
+    select: {
+      id: true,
+      titre: true,
+      objet: true,
+      message: true,
+      statut: true,
+      ordreObligatoire: true,
+      rappelFrequence: true,
+      createurNom: true,
+      createurId: true,
+      fichierNom: true,
+      fichierMime: true,
+      createdAt: true,
+      envoyeAt: true,
+      completeAt: true,
+      deletedAt: true,
+      destinataires: {
+        orderBy: { ordre: "asc" },
+        select: {
+          id: true,
+          ordre: true,
+          email: true,
+          nom: true,
+          role: true,
+          statut: true,
+          signeAt: true,
+          userId: true,
+          signatureImage: true,
+        },
+      },
+      champs: {
+        orderBy: { createdAt: "asc" },
+        select: {
+          id: true,
+          type: true,
+          valeur: true,
+          posX: true,
+          posY: true,
+          largeur: true,
+          hauteur: true,
+        },
+      },
     },
   });
   if (!r || r.deletedAt) return null;

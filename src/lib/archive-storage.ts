@@ -139,19 +139,24 @@ export const ALLOWED_ARCHIVE_CONTENT_TYPES = [
   "application/octet-stream",
 ];
 
-export async function saveArchiveFile(
-  file: File,
-  subdir: string
+export async function saveArchiveBytes(
+  buffer: Uint8Array,
+  opts: {
+    subdir: string;
+    fileName: string;
+    mimeType?: string;
+  }
 ): Promise<StoredArchive> {
-  const { ext, mimeType } = validateArchiveFileMeta(file);
+  const { ext, mimeType } = validateArchiveFileMeta({
+    name: opts.fileName,
+    size: buffer.byteLength,
+  });
   const safeName = `${randomUUID()}${ext}`;
-  const relativeDir = subdir.replace(/\\/g, "/").replace(/^\/+/, "");
-  const buffer = new Uint8Array(await file.arrayBuffer());
-  const contentType = file.type || mimeType;
+  const relativeDir = opts.subdir.replace(/\\/g, "/").replace(/^\/+/, "");
+  const contentType = opts.mimeType || mimeType;
 
-  // 1) Vercel Blob (persistant en prod)
   if (hasBlobStorage()) {
-    const pathname = buildBlobPathname(subdir, file.name);
+    const pathname = buildBlobPathname(opts.subdir, opts.fileName);
     const blob = await put(pathname, Buffer.from(buffer), {
       access: "private",
       contentType,
@@ -160,21 +165,19 @@ export async function saveArchiveFile(
     return {
       cheminStockage: blob.url,
       mimeType: contentType,
-      tailleOctets: file.size,
+      tailleOctets: buffer.byteLength,
     };
   }
 
-  // 2) Serverless sans Blob → BYTEA
   if (usesDatabaseArchiveStorage()) {
     return {
       cheminStockage: `db/${relativeDir}/${safeName}`.replace(/\/+/g, "/"),
       mimeType: contentType,
-      tailleOctets: file.size,
+      tailleOctets: buffer.byteLength,
       contenu: buffer,
     };
   }
 
-  // 3) Disque local (dev)
   const dir = path.join(getArchivesRoot(), relativeDir);
   try {
     await mkdir(dir, { recursive: true });
@@ -198,8 +201,20 @@ export async function saveArchiveFile(
   return {
     cheminStockage: path.join(relativeDir, safeName).replace(/\\/g, "/"),
     mimeType: contentType,
-    tailleOctets: file.size,
+    tailleOctets: buffer.byteLength,
   };
+}
+
+export async function saveArchiveFile(
+  file: File,
+  subdir: string
+): Promise<StoredArchive> {
+  const buffer = new Uint8Array(await file.arrayBuffer());
+  return saveArchiveBytes(buffer, {
+    subdir,
+    fileName: file.name,
+    mimeType: file.type || undefined,
+  });
 }
 
 export async function readArchiveBytes(

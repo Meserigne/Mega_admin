@@ -25,9 +25,16 @@ export async function GET(
 
   const envelope = await prisma.signatureEnvelope.findUnique({
     where: { id },
-    include: {
-      destinataires: true,
-      champs: { orderBy: { createdAt: "asc" } },
+    select: {
+      id: true,
+      deletedAt: true,
+      createurId: true,
+      fichierNom: true,
+      fichierMime: true,
+      fichierChemin: true,
+      destinataires: {
+        select: { userId: true, email: true },
+      },
     },
   });
   if (!envelope || envelope.deletedAt) {
@@ -61,7 +68,7 @@ export async function GET(
             "Content-Type": "application/pdf",
             "Content-Length": String(flattened.bytes.byteLength),
             "Content-Disposition": `inline; filename="${encodeURIComponent(flattened.fileName)}"`,
-            "Cache-Control": "private, no-store",
+            "Cache-Control": "private, max-age=300",
           },
         });
       } catch (e) {
@@ -78,9 +85,17 @@ export async function GET(
       }
     }
 
+    const fileRow = await prisma.signatureEnvelope.findUnique({
+      where: { id },
+      select: { fichierChemin: true, fichierContenu: true },
+    });
+    if (!fileRow) {
+      return NextResponse.json({ error: "Document introuvable." }, { status: 404 });
+    }
+
     if (
-      (!envelope.fichierContenu || envelope.fichierContenu.length === 0) &&
-      isDbArchivePath(envelope.fichierChemin)
+      (!fileRow.fichierContenu || fileRow.fichierContenu.length === 0) &&
+      isDbArchivePath(fileRow.fichierChemin)
     ) {
       return NextResponse.json(
         { error: "Fichier absent du stockage." },
@@ -89,8 +104,8 @@ export async function GET(
     }
 
     const body = await readArchiveBytes(
-      envelope.fichierChemin,
-      envelope.fichierContenu
+      fileRow.fichierChemin,
+      fileRow.fichierContenu
     );
     const mime = envelope.fichierMime ?? "application/octet-stream";
 

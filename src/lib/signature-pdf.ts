@@ -1,4 +1,9 @@
-import { readArchiveBytes, isDbArchivePath } from "@/lib/archive-storage";
+import {
+  deleteArchiveFile,
+  isDbArchivePath,
+  readArchiveBytes,
+  saveArchiveBytes,
+} from "@/lib/archive-storage";
 import { signatureContactEmail } from "@/lib/mail";
 import {
   buildSignedPdf,
@@ -150,9 +155,84 @@ function buildAuditReport(envelope: {
   };
 }
 
+async function readCachedSignedPdf(envelopeId: string): Promise<{
+  bytes: Uint8Array;
+  fileName: string;
+} | null> {
+  const meta = await prisma.signatureEnvelope.findUnique({
+    where: { id: envelopeId },
+    select: {
+      statut: true,
+      fichierSigneChemin: true,
+      fichierSigneNom: true,
+      fichierSigneAt: true,
+    },
+  });
+  if (!meta || meta.statut !== "COMPLETE") return null;
+  if (!meta.fichierSigneChemin || !meta.fichierSigneAt) return null;
+
+  try {
+    let contenu: Uint8Array | null = null;
+    if (isDbArchivePath(meta.fichierSigneChemin)) {
+      const row = await prisma.signatureEnvelope.findUnique({
+        where: { id: envelopeId },
+        select: { fichierSigneContenu: true },
+      });
+      contenu = row?.fichierSigneContenu ?? null;
+    }
+    const bytes = await readArchiveBytes(meta.fichierSigneChemin, contenu);
+    if (!bytes.length) return null;
+    return {
+      bytes,
+      fileName: meta.fichierSigneNom || "document-signe.pdf",
+    };
+  } catch (e) {
+    console.warn("[signature-pdf] cache signed PDF unreadable", e);
+    return null;
+  }
+}
+
+async function persistSignedPdfCache(
+  envelopeId: string,
+  pdf: { bytes: Uint8Array; fileName: string },
+  previousChemin: string | null
+): Promise<void> {
+  try {
+    const saved = await saveArchiveBytes(pdf.bytes, {
+      subdir: `signatures/signed/${envelopeId}`,
+      fileName: pdf.fileName,
+      mimeType: "application/pdf",
+    });
+    await prisma.signatureEnvelope.update({
+      where: { id: envelopeId },
+      data: {
+        fichierSigneNom: pdf.fileName,
+        fichierSigneChemin: saved.cheminStockage,
+        fichierSigneContenu: saved.contenu
+          ? Buffer.from(saved.contenu)
+          : null,
+        fichierSigneTaille: saved.tailleOctets,
+        fichierSigneAt: new Date(),
+      },
+    });
+    if (
+      previousChemin &&
+      previousChemin !== saved.cheminStockage &&
+      !isDbArchivePath(previousChemin)
+    ) {
+      await deleteArchiveFile(previousChemin).catch(() => null);
+    }
+  } catch (e) {
+    console.error("[signature-pdf] persist signed cache failed", e);
+  }
+}
+
 export async function buildSignedPdfForEnvelope(
   envelopeId: string
 ): Promise<{ bytes: Uint8Array; fileName: string } | null> {
+  const cached = await readCachedSignedPdf(envelopeId);
+  if (cached) return cached;
+
   const envelope = await prisma.signatureEnvelope.findUnique({
     where: { id: envelopeId },
     include: {
@@ -220,7 +300,7 @@ export async function buildSignedPdfForEnvelope(
     c.valeur = dest.signatureImage;
   }
 
-  return buildSignedPdf({
+  const built = await buildSignedPdf({
     fileBytes: new Uint8Array(body),
     fileMime: envelopeForAudit.fichierMime ?? "application/octet-stream",
     fileName: envelopeForAudit.fichierNom,
@@ -231,4 +311,14 @@ export async function buildSignedPdfForEnvelope(
     audit,
     lock: isComplete,
   });
+
+  if (isComplete) {
+    await persistSignedPdfCache(
+      envelope.id,
+      built,
+      envelope.fichierSigneChemin
+    );
+  }
+
+  return built;
 }

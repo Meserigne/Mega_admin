@@ -78,6 +78,12 @@ model SignatureEnvelope {
   fichierChemin    String
   fichierContenu   Bytes?
   fichierTaille    Int?
+  /** PDF certifié pré-généré (évite rebuild + qpdf à chaque téléchargement). */
+  fichierSigneNom     String?
+  fichierSigneChemin  String?
+  fichierSigneContenu Bytes?
+  fichierSigneTaille  Int?
+  fichierSigneAt      DateTime?
   envoyeAt         DateTime?
   completeAt       DateTime?
   /** Soft-delete : corbeille (null = actif). Purge auto après 30 jours. */

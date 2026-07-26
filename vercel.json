@@ -1,5 +1,6 @@
 {
   "framework": "nextjs",
   "buildCommand": "npm run vercel-build",
-  "installCommand": "npm install"
+  "installCommand": "npm install",
+  "regions": ["fra1"]
 }
