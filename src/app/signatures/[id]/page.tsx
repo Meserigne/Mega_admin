@@ -5,6 +5,8 @@ import { getSession } from "@/lib/auth";
 import { redirect, notFound } from "next/navigation";
 
 export const dynamic = "force-dynamic";
+/** Laisse le temps d’envoyer les mails d’invitation (SMTP) sans coupure. */
+export const maxDuration = 60;
 
 export default async function SignatureDocumentPage({
   params,

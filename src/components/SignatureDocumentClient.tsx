@@ -518,47 +518,54 @@ export function SignatureDocumentClient({
         </Card>
 
         <Card className="h-fit p-5">
-          <div className="flex items-center justify-between gap-2">
+          <div className="flex flex-wrap items-center justify-between gap-2">
             <p className="text-xs font-medium uppercase tracking-wide text-slate-500">
               Destinataires
             </p>
-            {detail.canResendInvite &&
-              !detail.destinataires.some((d) => d.statut === "A_SIGNER") &&
-              detail.destinataires.some(
-                (d) =>
-                  d.role === "SIGNATAIRE" &&
-                  d.statut !== "SIGNE" &&
-                  d.statut !== "REFUSE"
-              ) && (
-                <Button
-                  type="button"
-                  variant="secondary"
-                  className="!px-2 !py-1 text-xs"
-                  disabled={Boolean(resendingId) || loading}
-                  onClick={async () => {
-                    setError(null);
-                    setSuccess(null);
-                    setResendingId("all");
-                    try {
-                      const r = await resendEnvelopeInvite(detail.id);
-                      if (!r.ok) throw new Error(r.error);
-                      setSuccess(`Lien renvoyé à ${r.emailed.join(", ")}.`);
-                      router.refresh();
-                    } catch (e) {
-                      setError(
-                        e instanceof Error ? e.message : "Échec du renvoi."
-                      );
-                    } finally {
-                      setResendingId(null);
-                    }
-                  }}
-                >
-                  {resendingId === "all" ? "Envoi…" : "Activer & renvoyer"}
-                </Button>
-              )}
+            {detail.canResendInvite && (
+              <Button
+                type="button"
+                variant="primary"
+                className="!px-3 !py-1.5 text-xs"
+                disabled={Boolean(resendingId) || loading}
+                onClick={async () => {
+                  setError(null);
+                  setSuccess(null);
+                  setResendingId("all");
+                  try {
+                    const r = await resendEnvelopeInvite(detail.id);
+                    if (!r.ok) throw new Error(r.error);
+                    setSuccess(`Lien renvoyé à ${r.emailed.join(", ")}.`);
+                    router.refresh();
+                  } catch (e) {
+                    setError(
+                      e instanceof Error ? e.message : "Échec du renvoi."
+                    );
+                  } finally {
+                    setResendingId(null);
+                  }
+                }}
+              >
+                {resendingId === "all"
+                  ? "Envoi…"
+                  : "Renvoyer l’invitation"}
+              </Button>
+            )}
           </div>
+          {detail.canResendInvite && (
+            <p className="mt-2 text-[11px] text-slate-500">
+              Si un signataire n’a pas reçu le mail, cliquez sur
+              « Renvoyer l’invitation » ou sur le bouton à côté de son nom.
+            </p>
+          )}
           <ol className="mt-3 space-y-3">
-            {detail.destinataires.map((d) => (
+            {detail.destinataires.map((d) => {
+              const canResendThis =
+                detail.canResendInvite &&
+                d.statut !== "SIGNE" &&
+                d.statut !== "REFUSE" &&
+                (d.role === "SIGNATAIRE" || d.role === "INITIATEUR");
+              return (
               <li
                 key={d.id}
                 className={`rounded-lg border px-3 py-2.5 text-sm ${
@@ -586,7 +593,7 @@ export function SignatureDocumentClient({
                     {new Date(d.signeAt).toLocaleString("fr-FR")}
                   </p>
                 )}
-                {detail.canResendInvite && d.statut === "A_SIGNER" && (
+                {canResendThis && (
                   <div className="mt-2">
                     <Button
                       type="button"
@@ -597,12 +604,15 @@ export function SignatureDocumentClient({
                     >
                       {resendingId === d.id
                         ? "Envoi…"
-                        : "Renvoyer le lien"}
+                        : d.statut === "A_SIGNER"
+                          ? "Renvoyer le lien"
+                          : "Activer & renvoyer"}
                     </Button>
                   </div>
                 )}
               </li>
-            ))}
+              );
+            })}
           </ol>
 
           {detail.annotations.length > 0 && (

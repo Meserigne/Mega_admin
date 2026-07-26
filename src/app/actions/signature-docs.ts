@@ -1000,7 +1000,7 @@ export async function signEnvelopeDocument(
   return { ok: true };
 }
 
-/** Renvoie le lien de signature aux destinataires « À signer » (émetteur). */
+/** Renvoie le lien de signature (émetteur) — manuel, synchrone. */
 export async function resendEnvelopeInvite(
   envelopeId: string,
   destinataireId?: string
@@ -1025,62 +1025,96 @@ export async function resendEnvelopeInvite(
     return { ok: false, error: "Document déjà clôturé." };
   }
 
-  let targets = envelope.destinataires.filter((d) => {
-    if (d.statut !== "A_SIGNER") return false;
-    if (destinataireId && d.id !== destinataireId) return false;
-    return d.role === "SIGNATAIRE" || d.role === "INITIATEUR";
-  });
+  let targetIds: string[] = [];
 
-  // Si personne n'est « À signer » (mail précédent raté), réactive le prochain
-  if (targets.length === 0 && !destinataireId) {
-    const progress = await activateNextSigners(envelopeId);
-    if (progress.completed) {
-      return {
-        ok: false,
-        error: "Tous les signataires ont déjà signé — document à clôturer.",
-      };
+  if (destinataireId) {
+    const dest = envelope.destinataires.find((d) => d.id === destinataireId);
+    if (!dest) {
+      return { ok: false, error: "Destinataire introuvable." };
     }
-    envelope = await prisma.signatureEnvelope.findUnique({
-      where: { id: envelopeId },
-      include: { destinataires: { orderBy: { ordre: "asc" } } },
-    });
-    if (!envelope) return { ok: false, error: "Document introuvable." };
-    targets = envelope.destinataires.filter((d) =>
-      progress.newlyReadyIds.includes(d.id)
+    if (dest.statut === "SIGNE" || dest.statut === "REFUSE") {
+      return { ok: false, error: "Ce destinataire a déjà traité le document." };
+    }
+    if (dest.statut === "A_SIGNER") {
+      targetIds = [dest.id];
+    } else {
+      // EN_ATTENTE : n’activer que s’il est le prochain dans l’ordre
+      const stillOpen = envelope.destinataires.filter(
+        (d) =>
+          (d.role === "SIGNATAIRE" || d.role === "INITIATEUR") &&
+          d.statut !== "SIGNE" &&
+          d.statut !== "REFUSE"
+      );
+      const next =
+        stillOpen.find((d) => d.role === "SIGNATAIRE") || stillOpen[0];
+      if (!next || next.id !== dest.id) {
+        return {
+          ok: false,
+          error:
+            "Ce n'est pas encore le tour de ce destinataire. Relancez le signataire actuel.",
+        };
+      }
+      await prisma.signatureDestinataire.updateMany({
+        where: {
+          envelopeId,
+          statut: "A_SIGNER",
+          id: { not: dest.id },
+        },
+        data: { statut: "EN_ATTENTE" },
+      });
+      await prisma.signatureDestinataire.update({
+        where: { id: dest.id },
+        data: { statut: "A_SIGNER" },
+      });
+      targetIds = [dest.id];
+    }
+  } else {
+    let targets = envelope.destinataires.filter(
+      (d) =>
+        d.statut === "A_SIGNER" &&
+        (d.role === "SIGNATAIRE" || d.role === "INITIATEUR")
     );
+    if (targets.length === 0) {
+      const progress = await activateNextSigners(envelopeId);
+      if (progress.completed) {
+        return {
+          ok: false,
+          error: "Tous les signataires ont déjà signé.",
+        };
+      }
+      targetIds = progress.newlyReadyIds;
+    } else {
+      targetIds = targets.map((d) => d.id);
+    }
   }
 
-  if (targets.length === 0) {
+  if (targetIds.length === 0) {
     return {
       ok: false,
-      error: destinataireId
-        ? "Ce destinataire n'est pas en attente de signature."
-        : "Aucun destinataire à relancer pour le moment.",
+      error: "Aucun destinataire à relancer pour le moment.",
     };
   }
 
-  const invited = await sendInviteEmails(
-    envelopeId,
-    targets.map((d) => d.id)
-  );
-  if (invited.mail && !invited.mail.ok) {
+  const invited = await sendInviteEmails(envelopeId, targetIds);
+  if (!invited.mail?.ok) {
     return {
       ok: false,
-      error: invited.mail.error || "Échec d'envoi de l'e-mail.",
+      error: invited.mail?.error || "Échec d'envoi de l'e-mail.",
     };
   }
 
+  const emailed = invited.links.map((l) => l.email);
   await logAudit({
     userId: guard.id,
     userNom: guard.nom,
     action: "UPDATE",
     entity: "SignatureEnvelope",
     entityId: envelopeId,
-    details: `Relance invitation · ${targets.map((d) => d.email).join(", ")}`,
+    details: `Relance invitation · ${emailed.join(", ")}`,
   });
 
   revalidatePath(`/signatures/${envelopeId}`);
-  return { ok: true, emailed: targets.map((d) => d.email) };
+  return { ok: true, emailed };
 }
 
 export async function refuseEnvelopeDocument(
