@@ -21,6 +21,7 @@ import {
   sendSignatureCompletedEmail,
   signUrlForToken,
 } from "@/lib/signature-mail";
+import { ensureSignatureSchema } from "@/lib/db-ensure";
 import {
   sendInviteEmailsToDestinataires,
   type InviteLink,
@@ -172,6 +173,7 @@ async function sendCompletedEmails(envelopeId: string) {
 async function activateNextSigners(
   envelopeId: string
 ): Promise<{ completed: boolean; newlyReadyIds: string[] }> {
+  await ensureSignatureSchema();
   const envelope = await prisma.signatureEnvelope.findUnique({
     where: { id: envelopeId },
     include: {

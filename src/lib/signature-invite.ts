@@ -1,4 +1,5 @@
 import { randomBytes } from "crypto";
+import { ensureSignatureSchema } from "@/lib/db-ensure";
 import { prisma } from "@/lib/prisma";
 import {
   sendSignatureInviteEmail,
@@ -36,6 +37,8 @@ export async function sendInviteEmailsToDestinataires(
   if (destinataireIds.length === 0) {
     return { links: [], results: [], allOk: true };
   }
+
+  await ensureSignatureSchema();
 
   const envelope = await prisma.signatureEnvelope.findUnique({
     where: { id: envelopeId },
