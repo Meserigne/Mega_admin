@@ -361,7 +361,7 @@ export function Fab({
     <button
       type="button"
       onClick={onClick}
-      className="fixed bottom-6 left-6 z-40 flex items-center gap-2 rounded-full bg-[var(--accent)] px-5 py-3.5 text-sm font-medium text-[var(--c-blue-950)] shadow-[var(--shadow-md)] transition-all hover:scale-105 hover:bg-[var(--c-gold-600)] hover:text-white lg:hidden"
+      className="fixed bottom-6 right-6 z-40 flex items-center gap-2 rounded-full bg-[var(--accent)] px-5 py-3.5 text-sm font-medium text-[var(--c-blue-950)] shadow-[var(--shadow-md)] transition-all hover:scale-105 hover:bg-[var(--c-gold-600)] hover:text-white lg:hidden"
       aria-label={label}
     >
       <span className="text-lg leading-none">+</span>

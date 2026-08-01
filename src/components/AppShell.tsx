@@ -4,6 +4,7 @@ import { Suspense } from "react";
 import { usePathname } from "next/navigation";
 import { NavigationProgress } from "@/components/NavigationProgress";
 import { PermissionsProvider } from "@/components/PermissionsProvider";
+import { ScrollToTopButton } from "@/components/ScrollToTopButton";
 import { Sidebar } from "@/components/Sidebar";
 import { UserSessionBar } from "@/components/UserSessionBar";
 import {
@@ -67,6 +68,7 @@ export function AppShell({
               </div>
             </PermissionsProvider>
           </main>
+          <ScrollToTopButton />
         </div>
       </>
     );
@@ -91,6 +93,7 @@ export function AppShell({
             </div>
           </PermissionsProvider>
         </main>
+        <ScrollToTopButton />
       </div>
     </>
   );
