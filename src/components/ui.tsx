@@ -361,7 +361,7 @@ export function Fab({
     <button
       type="button"
       onClick={onClick}
-      className="fixed bottom-6 right-6 z-30 flex items-center gap-2 rounded-full bg-[var(--accent)] px-5 py-3.5 text-sm font-medium text-[var(--c-blue-950)] shadow-[var(--shadow-md)] transition-all hover:scale-105 hover:bg-[var(--c-gold-600)] hover:text-white lg:hidden"
+      className="fixed bottom-6 right-6 z-40 flex items-center gap-2 rounded-full bg-[var(--accent)] px-5 py-3.5 text-sm font-medium text-[var(--c-blue-950)] shadow-[var(--shadow-md)] transition-all hover:scale-105 hover:bg-[var(--c-gold-600)] hover:text-white"
       aria-label={label}
     >
       <span className="text-lg leading-none">+</span>
@@ -372,7 +372,7 @@ export function Fab({
 
 export function StickyToolbar({ children }: { children: ReactNode }) {
   return (
-    <div className="sticky top-0 z-20 -mx-1 mb-4 rounded-[var(--radius-lg)] border border-[var(--border)] bg-[var(--card)]/95 px-4 py-3 shadow-[var(--shadow-xs)] backdrop-blur-md">
+    <div className="sticky top-0 z-30 -mx-1 mb-4 rounded-[var(--radius-lg)] border border-[var(--border)] bg-[var(--card)]/95 px-4 py-3 shadow-[var(--shadow-xs)] backdrop-blur-md">
       {children}
     </div>
   );
